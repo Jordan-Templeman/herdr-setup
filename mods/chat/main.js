@@ -7,6 +7,7 @@
 // Read-only with props { transcript: "<absolute .jsonl>", title? }: a Claude Code transcript or a
 // Codex rollout for a session running outside Herdr, followed as it grows, without a composer.
 
+import { openBeside } from "./beside.js";
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings, openOverlay } from "herdr";
@@ -68,7 +69,7 @@ function openLink(url, cx) {
     : null;
   if (!target) return cx.open_url(url);
   if (props()?.overlay) return openOverlay({ mod: target.mod, props: target.props, kind: "dialog", width: target.width, height: 0.9 });
-  run("pane.split", { direction: "right", mod: target.mod, props: target.props });
+  openBeside(target.mod, target.props, target.props.url ?? target.props.key);
 }
 
 export default class Chat extends View {

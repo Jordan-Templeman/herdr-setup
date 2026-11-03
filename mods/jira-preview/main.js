@@ -2,6 +2,7 @@
 // with props { key, action }; the footer moves it to another status, adds a comment, and starts or
 // reopens its agent session. setup.json's jira.dry_run logs those jira commands instead of running them.
 
+import { openBeside } from "./beside.js";
 import { View, div, svg } from "gpui-kit";
 import { sessionFor, statusOf, openSession, startSession } from "./session.js";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
@@ -269,10 +270,10 @@ export default class JiraPreview extends View {
       .when(Boolean(key), (el) => el.child(this.copyLink(t, this.link(key), "jira-preview")))
       .when(Boolean(props()?.overlay), (el) => el.child(div().id("beside").px(8).py(4).rounded(rad(this.s, 6)).text_size(11.5).text_color(t.muted)
         .hover((s) => s.bg(t.hover))
-        .on_click(() => {
+        .on_click(async () => {
           const { key } = props();
+          await openBeside("jira-preview", { key }, key);
           this.close();
-          run("pane.split", { direction: "right", mod: "jira-preview", props: { key } });
         })
         .child(label(this.s, "Open beside"))))
       .when(Boolean(props()?.overlay), (el) => el.child(div().id("close").p(4).rounded(rad(this.s, 6)).hover((s) => s.bg(t.hover))

@@ -4,6 +4,7 @@
 // With props { terminal } instead it shows that agent's worktree changes (git reads only) and sends
 // line comments to the agent's session as one message.
 
+import { openBeside as besidePane } from "./beside.js";
 import { View, div, svg } from "gpui-kit";
 import { sessionFor, sessionForPr, statusOf, openSession, startSession, sendToAgent, agentName } from "./session.js";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
@@ -141,9 +142,9 @@ export default class PrPreview extends View {
   }
 
   // The same PR as a pane beside the focused one; this dialog closes.
-  openBeside() {
+  async openBeside() {
     const { url, key, action } = props();
-    run("pane.split", { direction: "right", mod: "pr-preview", props: { url, key, ...(action ? { action } : {}) } });
+    await besidePane("pr-preview", { url, key, ...(action ? { action } : {}) }, url);
     this.close();
   }
 

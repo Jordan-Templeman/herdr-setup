@@ -371,8 +371,8 @@ export default class Chat extends View {
       if (k + 2 < parts.length) out.push(this.draft(t, `${id}-d${k}`, dedent(parts[k + 2]), parts[k + 1]));
     }
     return v_flex().gap(6)
-      .when(pics.length > 0, (el) => el.child(h_flex().flex_wrap().gap(6).children(pics.map((p, k) =>
-        this.thumb(t, p.replace(/^~/, home()), `${id}-${k}`)))))
+      .when(pics.length > 0, (el) => el.child(h_flex().flex_wrap().gap(6).children(pics.map((p, k, all) =>
+        this.thumb(t, p.replace(/^~/, home()), `${id}-${k}`, null, 200, 140, all.map((x) => x.replace(/^~/, home())))))))
       .children(out);
   }
 
@@ -421,11 +421,17 @@ export default class Chat extends View {
   }
 
   // A picture (absolute path), or a file tile when it isn't a picture or isn't copied in yet.
-  thumb(t, path, key, remove, w = 200, h = 140) {
+  // group: the pictures the viewer steps through from this one (the message's).
+  thumb(t, path, key, remove, w = 200, h = 140, group = null) {
     const src = IMAGE.test(path) ? this.shown(path) : null;
     return div().id(`img-${key}`).relative().rounded(rad(this.s, 8)).overflow_hidden().border(1).border_color(t.border)
       .cursor_pointer().hover((s) => s.opacity(0.9))
-      .on_click((_e, cx) => cx.open_url(`file://${path}`))
+      .on_click((_e, cx) => {
+        const list = (group ?? [path]).filter((p) => IMAGE.test(p));
+        if (!src) return cx.open_url(`file://${path}`);
+        this.viewer = { list, at: Math.max(0, list.indexOf(path)) };
+        cx.notify();
+      })
       .child(src ? image(src).w(w).h(h)
         : h_flex().h(Math.min(h, 40)).max_w(220).gap(6).items_center().pl(8).pr(remove ? 28 : 10).bg(t.surface)
           .child(svg(`${ICONS}/file-text.svg`).size(14).flex_none().text_color(t.muted))
@@ -433,6 +439,30 @@ export default class Chat extends View {
       .when(Boolean(remove), (el) => el.child(div().id(`rm-${key}`).absolute().top(src ? 4 : 11).right(4).size(18).flex().items_center()
         .justify_center().rounded(9).bg(t.solid).text_size(11).text_color(t.solid_foreground)
         .on_click((_e, cx) => { cx.stop_propagation(); remove(cx); }).child("×")));
+  }
+
+  // A picture at full size over the chat: step through the message's pictures, open it in Preview,
+  // click outside or × to close.
+  viewerView(t) {
+    const { list, at } = this.viewer;
+    const path = list[at];
+    const src = this.shown(path);
+    const w = Math.max(200, (this.box?.width ?? 800) - 48);
+    const h = Math.max(160, (this.box?.height ?? 600) - 96);
+    const go = (d) => (_e, cx) => { cx.stop_propagation(); this.viewer = { list, at: (at + d + list.length) % list.length }; cx.notify(); };
+    const btn = (id, text, onClick) => div().id(id).px(10).py(4).rounded(rad(this.s, 6)).bg(t.raised).text_size(12)
+      .text_color(t.foreground).hover((s) => s.bg(t.hover)).on_click(onClick).child(text);
+    return v_flex().id("viewer").absolute().top(0).left(0).size_full().bg("#000000e6").items_center().gap(10).p(16)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { this.viewer = null; cx.notify(); })
+      .child(h_flex().w_full().gap(8).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color("#ffffffb3").child(`${path.split("/").pop()}  ·  ${at + 1} / ${list.length}`))
+        .when(list.length > 1, (el) => el.child(btn("v-prev", "←", go(-1))).child(btn("v-next", "→", go(1))))
+        .child(btn("v-open", "Open in Preview", (_e, cx) => { cx.stop_propagation(); exec("open", [path]); }))
+        .child(btn("v-close", "×", (_e, cx) => { cx.stop_propagation(); this.viewer = null; cx.notify(); })))
+      .child(div().id("v-img").flex_1().w_full().flex().items_center().justify_center()
+        .on_click((_e, cx) => cx.stop_propagation())
+        .child(src ? image(src).w(w).h(h) : div().text_color("#ffffffb3").child("Loading…")));
   }
 
   // The prompt on the terminal's screen: what it shows, the question, an answer button per option.
@@ -510,7 +540,7 @@ export default class Chat extends View {
           .when(st.name === "lcars", (el) => el.border(1).border_color(`${t.ansi5}99`))
           .when(Boolean(m.queued || m.sending), (el) => el.opacity(0.6))
           .when(m.images.length > 0, (el) => el.child(h_flex().flex_wrap().gap(6).children(m.images.map((n) =>
-            this.thumb(t, `${this.cache}/${n}`, `${i}-${n}`)))))
+            this.thumb(t, `${this.cache}/${n}`, `${i}-${n}`, null, 200, 140, m.images.map((x) => `${this.cache}/${x}`))))))
           .when(Boolean(m.text), (el) => el.child(this.prose(`u-${i}`, m.text))))
         .when(Boolean(m.queued || m.sending), (el) => el.child(div().text_size(10.5).text_color(t.muted)
           .child(label(st, m.queued ? "Queued · Claude will read it when it finishes" : "Sending…"))));
@@ -678,13 +708,15 @@ export default class Chat extends View {
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click((_e, cx) => this.send(cx)).child(soft ? "Send" : label(st, "Send ⏎"))));
 
-    return v_flex().size_full().bg(t.background)
+    return v_flex().id("chat-root").size_full().relative().bg(t.background)
+      .on_size_change((size, cx) => { const z = Number(settings().zoom) || 1; this.box = { width: size.width / z, height: size.height / z }; cx.notify(); })
       .child(header)
       .child(this.error
         ? div().flex_1().p(20).text_size(12.5).text_color(t.muted).child(this.error)
         : feed)
       .when(Boolean(banner), (el) => el.child(banner))
       .when(Boolean(menu), (el) => el.child(menu))
-      .child(composer);
+      .child(composer)
+      .when(Boolean(this.viewer), (el) => el.child(this.viewerView(t)));
   }
 }

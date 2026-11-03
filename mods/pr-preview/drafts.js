@@ -7,7 +7,7 @@ import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { appHome, notify, watchFolder } from "herdr";
 import * as fs from "fs/promises";
 import { label, rad } from "./style.js";
-import { ago, chip, replyTo, addThread, pendingReview, ghWrite, isDryRun, loadThreads, openLink } from "./threads.js";
+import { ago, chip, replyTo, addThread, pendingReview, ghWrite, isDryRun, loadThreads, openLink, setResolved } from "./threads.js";
 
 export const draftsDir = () => `${appHome()}/drafts`;
 const PR = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
@@ -128,7 +128,7 @@ export class Drafts {
   post(d, kind, how, cx) {
     if (this.busy) return;
     const data = this.data();
-    const what = { now: "reply", review: "add to review", comment: "post comment" }[how];
+    const what = { now: "reply", resolve: "reply and resolve", review: "add to review", comment: "post comment" }[how];
     this.busy = { id: d.id, what };
     cx.notify();
     cx.spawn(async (cx) => {
@@ -136,7 +136,10 @@ export class Drafts {
         if (how === "comment") {
           const r = await ghWrite(["pr", "comment", this.url(), "--body", d.body]);
           if (r.code !== 0) throw new Error(r.stderr.trim() || "gh pr comment failed");
-        } else if (kind.kind === "thread") await replyTo(data, kind.thread.id, d.body, how === "review");
+        } else if (kind.kind === "thread") {
+          await replyTo(data, kind.thread.id, d.body, how === "review");
+          if (how === "resolve") await setResolved(kind.thread.id, true);
+        }
         else await addThread(data, { path: d.path, line: d.line, side: d.side ?? "RIGHT", body: d.body });
         if (isDryRun()) notify({ title: `Dry run: ${what} logged`, body: "inspect/gh-dry-run.log", level: "info", timeout: 3000 });
         else {
@@ -264,6 +267,7 @@ export function draftCard(t, s, p, ctl, prefix) {
   const acts = [];
   if (p.kind === "thread") {
     acts.push(btn(t, s, id("n"), busy === "reply" ? "Posting…" : "Reply now", true, (cx) => ctl.post(d, p, "now", cx)));
+    if (p.thread?.canResolve && !p.thread.resolved) acts.push(btn(t, s, id("x"), busy === "reply and resolve" ? "Posting…" : "Reply & resolve", false, (cx) => ctl.post(d, p, "resolve", cx)));
     acts.push(btn(t, s, id("r"), busy === "add to review" ? "Adding…" : "Add to review", false, (cx) => ctl.post(d, p, "review", cx)));
   } else if (p.kind === "inline") {
     acts.push(btn(t, s, id("r"), busy ? "Adding…" : "Add to review", true, (cx) => ctl.post(d, p, "review", cx)));

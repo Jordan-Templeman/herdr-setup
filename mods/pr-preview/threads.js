@@ -412,7 +412,8 @@ export class Replies {
     cx.notify();
   }
 
-  send(id, toReview, cx) {
+  // resolve: post now, then resolve the thread (GitHub's "Resolve with comment").
+  send(id, toReview, cx, resolve = false) {
     const box = this.boxes.get(id);
     const body = box?.input.value().trim();
     const data = this.data();
@@ -421,12 +422,13 @@ export class Replies {
       box.error = "Write a reply first.";
       return cx.notify();
     }
-    box.busy = toReview ? "review" : "now";
+    box.busy = toReview ? "review" : resolve ? "resolve" : "now";
     box.error = null;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         await replyTo(data, id, body, toReview);
+        if (resolve) await setResolved(id, true);
         this.boxes.delete(id);
         this.reload(cx);
       } catch (e) {
@@ -569,6 +571,7 @@ function replyBox(t, s, i, rep, prefix) {
       .child(act("rcancel", "Cancel", false, (_e, cx) => { if (!box.busy) rep.close(i.id, cx); }))
       .when(Boolean(rep.agent?.()), (el) => el.child(act("ragent", box.busy === "agent" ? "Sending…" : "Send to agent", false, (_e, cx) => rep.toAgent(i, cx))))
       .child(act("rlater", box.busy === "review" ? "Adding…" : "Add to review", false, (_e, cx) => rep.send(i.id, true, cx)))
+      .when(Boolean(i.canResolve && !i.resolved), (el) => el.child(act("rres", box.busy === "resolve" ? "Posting…" : "Reply & resolve", false, (_e, cx) => rep.send(i.id, false, cx, true))))
       .child(act("rnow", box.busy === "now" ? "Posting…" : "Reply now", true, (_e, cx) => rep.send(i.id, false, cx))));
 }
 

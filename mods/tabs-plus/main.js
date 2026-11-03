@@ -113,16 +113,19 @@ export default class Tabs extends View {
     };
     // Pond, inbox and focus mode (pane-plus hides the side blocks and remembers which).
     const visible = (id) => { const n = find(root, id); return Boolean(n && !n.hidden); };
-    const focus = Boolean(shared("pane-plus.focus"));
+    // Focus mode counts as on only while everything it hides is still hidden.
+    const focus = Boolean(shared("pane-plus.focus")) && !["sidebar", "field", "inbox"].some(visible);
     const toggle = (id, text, icon, color, on, action, tip) => look.name === "soft"
       ? div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6)
         .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
         .on_mouse_down("left", stop).on_click(action).tooltip(tip).child(svg(icon).size(14))
       : chip(id, on, text, look.name === "deck" ? null : icon, color, action).tooltip(tip);
     const toggles = h_flex().gap(look.name === "soft" ? 1 : 4).flex_none().items_center()
-      .when(Boolean(find(root, "field")), el => el.child(toggle("toggle-pond", "Pond", "mods/workspace-chrome-plus/layers.svg", t.ansi3, visible("field") && !focus,
+      .when(Boolean(find(root, "sidebar")), el => el.child(toggle("toggle-spaces", "Spaces", "mods/workspace-chrome-plus/sidebar.svg", t.ansi4, visible("sidebar"),
+        () => run("layout.toggle", { id: "sidebar" }), "Spaces & agents  \u2318B")))
+      .when(Boolean(find(root, "field")), el => el.child(toggle("toggle-pond", "Pond", "mods/workspace-chrome-plus/layers.svg", t.ansi3, visible("field"),
         () => run("layout.toggle", { id: "field" }), "Pond  \u2325\u2318P")))
-      .when(Boolean(find(root, "inbox")), el => el.child(toggle("toggle-inbox", "Inbox", "mods/workspace-chrome-plus/panel-right.svg", t.ansi5, visible("inbox") && !focus,
+      .when(Boolean(find(root, "inbox")), el => el.child(toggle("toggle-inbox", "Inbox", "mods/workspace-chrome-plus/panel-right.svg", t.ansi5, visible("inbox"),
         () => run("layout.toggle", { id: "inbox" }), "Inbox  \u2325\u2318I")))
       .child(toggle("toggle-focus", "Focus", "mods/workspace-chrome-plus/square.svg", t.blocked, focus,
         () => run("pane-plus.zen"), "Focus mode  \u2325\u2318F"));

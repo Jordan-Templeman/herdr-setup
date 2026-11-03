@@ -8,7 +8,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, props, run, theme, home, terminals, focused, nextCommand, shared, setShared } from "herdr";
+import { panes, props, run, theme, home, terminals, focused, nextCommand, shared, setShared, layout } from "herdr";
 import { modes, chatFor, toChat, toCli } from "./mode.js";
 import { openChanges } from "./changes.js";
 import { style, label, badge, LETTER } from "./style.js";
@@ -28,15 +28,18 @@ function folder(cwd) {
 // brings back the ones it hid. Every header gets the key; the focused pane's acts.
 const FOCUS_BLOCKS = ["sidebar", "field", "inbox", "status"];
 
+function shownBlock(id) {
+  const find = (n) => n?.id === id ? n : (n?.children ?? []).map(find).find(Boolean);
+  const n = find(layout());
+  return Boolean(n && !n.hidden);
+}
+
+// Hides whatever is showing; when everything is already hidden, by focus mode or by hand, brings
+// it all back.
 function toggleFocus() {
-  const hidden = shared("pane-plus.focus");
-  if (hidden) {
-    hidden.forEach((id) => run("layout.show", { id }));
-    setShared("pane-plus.focus", null);
-  } else {
-    FOCUS_BLOCKS.forEach((id) => run("layout.hide", { id }));
-    setShared("pane-plus.focus", FOCUS_BLOCKS);
-  }
+  const showing = FOCUS_BLOCKS.filter(shownBlock);
+  FOCUS_BLOCKS.forEach((id) => run(showing.length ? "layout.hide" : "layout.show", { id }));
+  setShared("pane-plus.focus", showing.length ? FOCUS_BLOCKS : null);
 }
 
 export default class Pane extends View {

@@ -1,6 +1,5 @@
-// Opens an agent's worktree changes: the PR preview's diff, read from git, with line comments that
-// go to the agent's session.
-import { openOverlay } from "herdr";
+// Opens an agent's worktree changes as a pane beside the focused one (the PR preview's diff, read
+// from git, with line comments that go to the agent's session); a second open shows the same pane.
+import { openBeside } from "./beside.js";
 
-export const openChanges = (terminal) =>
-  openOverlay({ mod: "pr-preview", props: { terminal }, kind: "dialog", width: 0.85, height: 0.9 });
+export const openChanges = (terminal) => openBeside("pr-preview", { terminal }, `changes:${terminal}`);

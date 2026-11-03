@@ -211,10 +211,21 @@ export default class PrPreview extends View {
       if (tracked.code !== 0) this.diffError = tracked.stderr.trim() || "git diff failed";
       else {
         this.files = parseDiff([tracked.stdout, ...added.map((r) => r.stdout)].join("\n"));
-        for (const f of this.files) this.expanded.add(f.name);
+        this.expandSome(this.files);
       }
       cx.notify();
     });
+  }
+
+  // Opens files in order until about 1500 lines show; a bigger diff starts mostly collapsed, so the
+  // first render stays quick (thousands of expanded lines interrupt it).
+  expandSome(files) {
+    let shown = 0;
+    for (const f of files) {
+      if (shown && shown + f.lines.length > 1500) break;
+      this.expanded.add(f.name);
+      shown += Math.min(f.lines.length, MAX_LINES);
+    }
   }
 
   // Pending line comments as one message to the agent, which reads it like any prompt.
@@ -312,7 +323,7 @@ export default class PrPreview extends View {
       else {
         this.files = parseDiff(r.stdout);
         if (this.threads) place(this.threads.items, this.files);
-        for (const f of this.files) if (!this.viewed.has(f.name)) this.expanded.add(f.name);
+        this.expandSome(this.files.filter((f) => !this.viewed.has(f.name)));
         this.applyAnchor();
       }
       cx.notify();

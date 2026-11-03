@@ -1,5 +1,6 @@
 // A GitHub PR as a dialog: state, review, checks, branch, size, description. Opened by the
-// inbox with props { url, key, action }; the footer starts or reopens its agent session.
+// inbox with props { url, key, action, anchor }; the footer starts or reopens its agent session. Also opens
+// as a pane (pane.split, no props().overlay): then the pane header closes it.
 // With props { terminal } instead it shows that agent's worktree changes (git reads only) and sends
 // line comments to the agent's session as one message.
 
@@ -7,7 +8,9 @@ import { View, div, svg } from "gpui-kit";
 import { sessionFor, sessionForPr, statusOf, openSession, startSession, sendToAgent, agentName } from "./session.js";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { tokens, langFor, paletteFor } from "./highlight.js";
-import { loadThreads, place, summary, card, elsewhere, elsewhereBlock, fileCounts, allComments, commentList, jumpIndex, Replies, ghWrite, submitPending } from "./threads.js";
+import { loadThreads, place, summary, card, elsewhere, elsewhereBlock, fileCounts, allComments, commentList, jumpIndex, Replies, ghWrite, submitPending, openLink } from "./threads.js";
+import { loadTimeline, conversation, findItem } from "./conversation.js";
+import { anchorTarget } from "./anchor.js";
 import { parseDiff, splitRows, agentMessage } from "./diff.js";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, spaces, run, theme, notify, props, closeOverlay, settings, home, appHome, shared, setShared, terminals, agents } from "herdr";
@@ -75,7 +78,10 @@ export default class PrPreview extends View {
     this.reviewError = null;
     this.threads = null;
     this.open = new Set();
-    this.replies = new Replies({ data: () => this.threads, reload: (cx) => this.load(cx), agent: () => this.prAgent(), files: () => this.files });
+    this.timeline = null;
+    this.focus = null;
+    this.replies = new Replies({ data: () => this.threads, reload: (cx) => this.load(cx), agent: () => this.prAgent(), files: () => this.files,
+      quote: (c, cx) => this.quote(c, cx) });
     this.jump = null;
     this.only = null;
     this.showComments = false;
@@ -83,8 +89,62 @@ export default class PrPreview extends View {
     this.terminal = props()?.terminal ?? null;
     // Pending line comments live under the PR's url, or the agent's terminal.
     this.key = this.terminal ? `local:${this.terminal}` : props()?.url;
+    this.target = anchorTarget(props()?.anchor);
     if (this.terminal) this.loadLocal(cx);
-    else this.load(cx);
+    else {
+      this.load(cx);
+      if (this.target.view === "files") this.showFiles(cx);
+      if (this.target.view === "conversation") this.showConversation(cx);
+    }
+  }
+
+  // A link's target, once what it needs has loaded: the thread in Files changed, or the comment in Conversation.
+  applyAnchor() {
+    const match = this.target?.match;
+    if (!match) return;
+    if (this.target.view === "conversation" && this.timeline) {
+      const index = findItem(this.timeline, match);
+      this.focus = index < 0 ? null : { index, match };
+      this.target = null;
+    } else if (this.target.view === "files" && this.files && this.threads) {
+      const i = this.threads.items.find((x) => x.comments.some((c) => match(c.url)));
+      if (i) {
+        this.only = i.path;
+        this.expanded.add(i.path);
+        this.jump = { path: i.path, side: i.side, line: i.anchored ? i.line : null };
+        if (i.resolved || i.outdated) this.open.add(i.id);
+        if (i.comments.length > 1) this.open.add(`r:${i.id}`);
+      }
+      this.target = null;
+    }
+  }
+
+  showConversation(cx) {
+    this.view = "conversation";
+    cx.notify();
+    if (this.timeline || this.loadingTimeline) return;
+    this.loadingTimeline = true;
+    cx.spawn(async (cx) => {
+      this.timeline = await loadTimeline(props().url).catch((e) => ({ items: [], error: String(e) }));
+      this.loadingTimeline = false;
+      this.applyAnchor();
+      cx.notify();
+    });
+  }
+
+  // Reply to a comment outside a thread: quote it in the comment box.
+  quote(c, cx) {
+    const quoted = c.body.trim().split("\n").slice(0, 12).map((l) => `> ${l}`).join("\n");
+    this.reply.set_value(`> @${c.author} wrote:\n${quoted}\n\n${this.reply.value()}`);
+    if (this.view !== "conversation") this.composing = true;
+    cx.notify();
+  }
+
+  // The same PR as a pane beside the focused one; this dialog closes.
+  openBeside() {
+    const { url, key, action } = props();
+    run("pane.split", { direction: "right", mod: "pr-preview", props: { url, key, ...(action ? { action } : {}) } });
+    this.close();
   }
 
   load(cx) {
@@ -103,7 +163,12 @@ export default class PrPreview extends View {
       else this.pr = JSON.parse(r.stdout);
       this.threads = threads;
       if (this.files) place(threads.items, this.files);
+      this.applyAnchor();
       cx.notify();
+      if (this.timeline) {
+        this.timeline = await loadTimeline(url).catch((e) => ({ items: [], error: String(e) }));
+        cx.notify();
+      }
     });
   }
 
@@ -247,6 +312,7 @@ export default class PrPreview extends View {
         this.files = parseDiff(r.stdout);
         if (this.threads) place(this.threads.items, this.files);
         for (const f of this.files) if (!this.viewed.has(f.name)) this.expanded.add(f.name);
+        this.applyAnchor();
       }
       cx.notify();
     });
@@ -625,7 +691,7 @@ export default class PrPreview extends View {
         .child(Textarea.new(this.reply).h(96).text_size(12.5).text_color(t.foreground)))
       .when(Boolean(this.reviewError), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.reviewError)))
       .when(Boolean(this.ghPendingNote(t)), (el) => el.child(this.ghPendingNote(t)))
-      .child(h_flex().gap(8).items_center()
+      .child(h_flex().gap(8).flex_wrap().items_center()
         .child(div().text_size(11.5).text_color(t.dim).child(pendingFor(props().url).length
           ? `Review includes ${pendingFor(props().url).length} line comment${pendingFor(props().url).length === 1 ? "" : "s"} · posts as you`
           : "Click a line number in Files changed to comment on it · posts as you"))
@@ -660,8 +726,9 @@ export default class PrPreview extends View {
       .child(div().text_size(11.5).text_color(this.copied ? t.done : t.muted).child(label(this.s, this.copied ? "Copied" : "Copy link")));
   }
 
+  // A pane has no overlay; its header closes it.
   close() {
-    closeOverlay(props().overlay);
+    if (props()?.overlay) closeOverlay(props().overlay);
   }
 
   // Footer action: back to the item's session, else its start action (from the inbox), else none.
@@ -778,7 +845,8 @@ export default class PrPreview extends View {
     const reviewColor = p?.reviewDecision === "APPROVED" ? t.done : p?.reviewDecision === "CHANGES_REQUESTED" ? t.blocked : t.muted;
     const c = p && checks(p.statusCheckRollup);
 
-    const header = h_flex().px(lcars ? 12 : 20).py(12).gap(10).items_center().border_b(1).border_color(t.border)
+    const overlay = Boolean(props()?.overlay);
+    const header = h_flex().px(lcars ? 12 : 20).py(12).gap(10).flex_wrap().items_center().border_b(1).border_color(t.border)
       .when(soft, (el) => el.child(div().text_size(12).text_color(t.muted).child("Pull request")))
       .when(!soft, (el) => el.child(heading(st, t, "Pull request", lcars ? "08-git" : "08.git")))
       .child(div().text_size(12.5).font_semibold().text_color(soft ? t.foreground : t.accent).when(lcars, (el) => el.font_family(st.head).text_size(17))
@@ -791,17 +859,25 @@ export default class PrPreview extends View {
       .when(Boolean(url), (el) => el.child(this.copyLink(t, url, "pr-preview")))
       .when(Boolean(p), (el) => el.child(this.segments(t, [
         ["overview", "Overview", (cx) => { this.view = "overview"; cx.notify(); }],
+        ["conversation", "Conversation", (cx) => this.showConversation(cx)],
         ["files", `Files changed ${p.changedFiles}`, (cx) => this.showFiles(cx)],
       ], this.view, "view")))
-      .child(div().id("close").p(4).rounded(rad(this.s, 6)).hover((s) => s.bg(t.hover))
+      .when(overlay && Boolean(url), (el) => el.child(div().id("beside").px(8).py(4).rounded(rad(st, 6)).text_size(11.5).text_color(t.muted)
+        .hover((s) => s.bg(t.hover)).on_click(() => this.openBeside()).child(label(st, "Open beside"))))
+      .when(overlay, (el) => el.child(div().id("close").p(4).rounded(rad(this.s, 6)).hover((s) => s.bg(t.hover))
         .on_click(() => this.close())
-        .child(svg(`${ICONS}/x.svg`).size(15).text_color(t.muted)));
+        .child(svg(`${ICONS}/x.svg`).size(15).text_color(t.muted))));
 
     let body;
     if (this.error) body = div().p(20).text_size(12.5).text_color(t.blocked).child(this.error);
     else if (!p) body = div().p(20).text_size(12.5).text_color(t.muted)
       .child(div().loop("opacity", { from: 0.35, to: 1, period: 900 }).child("Loading pull request…"));
     else if (this.view === "files") body = this.filesView(t);
+    else if (this.view === "conversation") body = conversation(t, st, {
+      data: this.timeline, threads: this.threads, open: this.open, rep: this.replies, checks: c, url,
+      reply: this.composing ? null : this.reply, submit: (cx) => this.submit("comment", cx), submitting: this.submitting, error: this.reviewError,
+      focus: this.focus, unfocus: (cx) => { this.focus = null; cx.notify(); },
+    });
     else {
       const reviewers = [
         ...(p.latestReviews ?? []).map((r) => `${r.author?.login} ${REVIEWED[r.state] ?? r.state?.toLowerCase()}`),
@@ -831,7 +907,7 @@ export default class PrPreview extends View {
         .child(v_flex().gap(6)
           .child(soft ? div().text_size(12).text_color(t.dim).child("Description") : heading(st, t, "Description", null, lcars ? t.ansi5 : t.muted))
           .child(description
-            ? TextView.markdown(`body-${key}`, description)
+            ? TextView.markdown(`body-${key}`, description).on_link_click((link, cx) => openLink(link, cx, url))
             : div().text_size(12.5).text_color(t.muted).child(label(st, "No description."))));
     }
 
@@ -847,7 +923,7 @@ export default class PrPreview extends View {
         .child(div().text_size(soft ? 12.5 : 11).when(!soft, (el) => el.font_bold()).when(lcars, (el) => el.font_family(st.head).text_size(16))
           .text_color(primary || lcars ? t.solid_foreground : t.foreground).child(label(st, text)));
 
-    const footer = h_flex().px(20).py(12).gap(8).justify_end().border_t(1).border_color(t.border)
+    const footer = h_flex().px(20).py(12).gap(8).flex_wrap().justify_end().border_t(1).border_color(t.border)
       .when(Boolean(p), (el) => el.child(button("review", this.composing ? "chevron-down" : "square-pen",
         this.composing ? "Hide review" : pendingFor(url).length ? `Submit review · ${pendingFor(url).length} pending` : "Submit review", pendingFor(url).length > 0 && !this.composing, (_e, cx) => { this.composing = !this.composing; this.reviewError = null; cx.notify(); })))
       .child(this.ghPendingNote(t) && !this.composing ? this.ghPendingNote(t).flex_1() : div().flex_1())

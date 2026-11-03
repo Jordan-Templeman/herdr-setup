@@ -322,6 +322,26 @@ export default class Search extends View {
     return out.slice(0, LIST_MAX);
   }
 
+  // Before anything is typed: the character that limits a search to one kind, the active one lit.
+  legend(t) {
+    const st = this.s ?? style();
+    const kinds = [[">", "Commands", "commands"], ["@", "Agents", "agents"], ["#", "PRs", "prs"], ["!", "Tickets", "jira"], ["/", "Files", "files"]];
+    return v_flex().flex_none().gap(6).px(2)
+      .child(div().text_size(11.5).text_color(t.dim).child("Start with a character to search one kind:"))
+      .child(h_flex().flex_wrap().gap(6).children(kinds.map(([k, name, id]) => h_flex().id(`kind-${id}`).gap(6).items_center().px(8).py(3)
+        .cursor_pointer().hover((h) => h.bg(t.hover))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click((_e, cx) => {
+          // The same as typing the character: another click on the lit one clears it.
+          this.input.set_value(this.only === id ? "" : k);
+          this.changed(cx);
+          this.input.focus();
+        })
+        .rounded(rad(st, 6)).border(1).border_color(this.only === id ? t.accent : t.border).when(this.only === id, (el) => el.bg(`${t.accent}22`))
+        .child(div().text_color(t.accent).font_semibold().child(k))
+        .child(div().text_size(11.5).text_color(this.only === id ? t.foreground : t.muted).child(name)))));
+  }
+
   selected() {
     return this.pickable?.[this.at] ?? null;
   }
@@ -481,6 +501,7 @@ export default class Search extends View {
         .child(svg("mods/workspace-chrome/search.svg").size(15).text_color(t.dim))
         .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground))
         .when(busy, (el) => el.child(svg("mods/workspace-chrome/spinner.svg").size(13).text_color(t.dim).spin(900))))
+      .when(!this.q.trim(), (el) => el.child(this.legend(t)))
       .child(v_flex().id("sr-list").flex_1().min_h(0).relative().overflow_hidden()
         .on_size_change((size, cx) => { this.listHeight = size.height / (settings().zoom ?? 1); cx.notify(); })
         .on_scroll_wheel((e, cx) => {
@@ -494,7 +515,7 @@ export default class Search extends View {
         })
         .children(rows.length
           ? rows.map((r, i) => (visible(i) ? place(row(r), i) : null)).filter(Boolean)
-          : [div().p(12).text_color(t.dim).child(this.q.trim() ? (busy ? "Searching…" : "Nothing matches") : "Type to search")]))
+          : [div().p(12).text_color(t.dim).child(this.q.trim() ? (busy ? "Searching…" : "Nothing matches") : "")]))
       .child(h_flex().flex_none().gap(14).text_size(11).text_color(t.dim)
         .child(hint("↑↓", "move")).child(hint("↵", "open")).child(hint("⌘↵", "in editor")).child(hint("⇥", "next group")).child(hint("> @ # ! /", "one group"))
         .child(div().flex_1()).child(div().truncate().child(this.folder ? this.folder.replace(home(), "~") : "")));

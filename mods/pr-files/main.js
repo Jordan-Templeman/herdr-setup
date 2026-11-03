@@ -9,7 +9,8 @@ import { exec, focused, agents, terminals, theme, settings, shared, setShared, o
 import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { modes } from "./mode.js";
 import { parseDiff } from "./diff.js";
-import { tokens, langFor, PALETTES } from "./highlight.js";
+import { tokens, langFor, paletteFor } from "./highlight.js";
+import { loadThreads, place, threadsAt, elsewhere, fileCounts, summary, card, elsewhereBlock, allComments, commentList, jumpIndex } from "./threads.js";
 
 const ICONS = "mods/workspace-chrome";
 const PENDING = "pr-preview.pending";
@@ -49,6 +50,9 @@ export default class PrFiles extends View {
     this.prs = new Map();
     this.sel = new Map();
     this.draft = null;
+    this.open = new Set();
+    this.jump = null;
+    this.showComments = false;
     this.width = 400;
     this.filter = "";
     this.filterInput = InputState.new({ placeholder: "Filter files" });
@@ -154,16 +158,19 @@ export default class PrFiles extends View {
     entry.loading = true;
     this.prs.set(url, entry);
     cx.spawn(async (cx) => {
-      const [view, diff] = await Promise.all([
+      const [view, diff, threads] = await Promise.all([
         exec("gh", ["pr", "view", url, "--json", FIELDS], { cwd: home() }),
         exec("gh", ["pr", "diff", url], { cwd: home() }),
+        loadThreads(url).catch((e) => ({ items: [], pending: 0, error: String(e) })),
       ]);
+      entry.threads = threads;
       if (view.code === 0) entry.meta = JSON.parse(view.stdout);
       if (diff.code !== 0) entry.error = diff.stderr.trim() || "gh pr diff failed";
       else {
         entry.error = null;
         entry.files = parseDiff(diff.stdout);
       }
+      if (entry.files) place(threads.items, entry.files);
       entry.loading = false;
       cx.notify();
     });
@@ -275,11 +282,15 @@ export default class PrFiles extends View {
     const dels = files.reduce((n, f) => n + f.dels, 0);
     const pending = pendingFor(url);
     const open = this.sel.get(url);
+    const threads = this.prs.get(url)?.threads;
+    const all = allComments(pending, threads);
     const bar = h_flex().px(12).py(6).gap(8).items_center()
       .child(div().text_size(11).text_color(t.muted).child(label(s, `${files.length} files`)))
       .child(div().text_size(11).text_color(t.ansi2).child(`+${adds}`))
       .child(div().text_size(11).text_color(t.ansi1).child(`−${dels}`))
+      .when(Boolean(summary(threads)), (el) => el.child(div().min_w(0).truncate().text_size(10.5).text_color(t.dim).child(label(s, summary(threads)))))
       .child(div().flex_1())
+      .child(this.button(t, s, "view-comments", this.showComments ? "Files" : `Comments · ${all.total}`, null, false, (_e, cx) => { this.showComments = !this.showComments; cx.notify(); }))
       .child(pending.length
         ? this.button(t, s, "submit-review", `Submit review · ${pending.length}`, `${ICONS}/square-pen.svg`, true, () => this.openReview(url))
         : div().text_size(10.5).text_color(t.dim).child(label(s, "Click a line number to comment")));
@@ -290,18 +301,32 @@ export default class PrFiles extends View {
       const parts = f.name.split("/");
       const name = parts.pop();
       const notes = pending.filter((c) => c.path === f.name).length;
+      const counts = fileCounts(threads?.items ?? [], f.name);
       return h_flex().id(`file-${i}`).h(26).flex_none().px(8).gap(8).items_center().rounded(rad(s, 6)).cursor_pointer()
         .when(open === f.name, (el) => el.bg(t.selected))
         .when(s.name === "deck" && open === f.name, (el) => el.border_l(2).border_color(t.accent))
         .hover((el) => el.bg(t.hover))
-        .on_click((_e, cx) => { this.sel.set(url, f.name); this.draft = null; cx.notify(); })
+        .on_click((_e, cx) => { this.sel.set(url, f.name); this.draft = null; this.jump = null; cx.notify(); })
         .child(h_flex().flex_1().min_w(0).text_size(12)
           .child(div().min_w(0).truncate().text_color(t.dim).child(parts.length ? `${parts.join("/")}/` : ""))
           .child(div().flex_none().max_w(260).truncate().text_color(t.foreground).child(name)))
+        .when(counts.threads > 0, (el) => el.child(div().flex_none().px(5).rounded(rad(s, 5)).bg(`${t.accent}22`).text_size(10).text_color(t.accent).child(String(counts.threads))))
+        .when(counts.pending > 0, (el) => el.child(div().flex_none().px(5).rounded(rad(s, 5)).bg(`${t.ansi5}22`).text_size(10).text_color(t.ansi5).child(String(counts.pending))))
         .when(notes > 0, (el) => el.child(div().flex_none().px(5).rounded(rad(s, 5)).bg(`${t.working}22`).text_size(10).text_color(t.working).child(String(notes))))
         .when(f.adds > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${f.adds}`)))
         .when(f.dels > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${f.dels}`)));
     });
+    if (this.showComments) {
+      return v_flex().flex_none().border_b(1).border_color(t.border).child(bar)
+        .child(v_flex().id("pr-comment-list").flex_none().max_h(320).px(6).pb(8).overflow_y_scrollbar()
+          .child(commentList(t, s, all, (r, cx) => {
+            this.sel.set(url, r.path);
+            this.jump = { url, path: r.path, side: r.side, line: r.line };
+            this.draft = null;
+            this.showComments = false;
+            cx.notify();
+          })));
+    }
     return v_flex().flex_none().border_b(1).border_color(t.border)
       .child(bar)
       .when(Boolean(filter), (el) => el.child(filter))
@@ -320,14 +345,18 @@ export default class PrFiles extends View {
     const hunk = l.kind === "hunk";
     const n = hunk ? null : l.kind === "del" ? l.oldNo : l.newNo;
     const side = l.kind === "del" ? "LEFT" : "RIGHT";
-    const tint = { add: `${t.ansi2}26`, del: `${t.ansi1}26`, hunk: `${t.accent}14` }[l.kind];
-    const num = div().w(38).flex_none().px(5).text_right().text_color(t.dim).child(n == null ? "" : String(n));
+    const j = this.jump;
+    const target = !hunk && j && j.url === url && j.path === path && j.line != null && j.line === (j.side === "LEFT" ? l.oldNo : l.newNo);
+    const tint = target ? `${t.accent}2a` : { add: `${t.ansi2}12`, del: `${t.ansi1}16`, hunk: `${t.accent}10` }[l.kind];
+    const mark = { add: t.ansi2, del: t.ansi1 }[l.kind];
+    const num = div().w(42).flex_none().pl(4).pr(8).text_right().text_color(t.dim).opacity(0.8).child(n == null ? "" : String(n));
     return h_flex().id(`l-${i}`).min_w_full().flex_none().items_start().whitespace_nowrap()
       .when(Boolean(tint), (el) => el.bg(tint))
+      .child(div().w(3).flex_none().self_stretch().when(Boolean(mark), (el) => el.bg(mark)))
       .child(n == null ? num : num.id(`n-${i}`).cursor_pointer()
         .hover((el) => el.bg(`${t.accent}33`).text_color(t.accent))
         .on_click((_e, cx) => this.startDraft(url, path, side, n, cx)))
-      .child(div().w(14).flex_none().text_color(t.dim).child({ add: "+", del: "−", hunk: "", ctx: " " }[l.kind]))
+      .child(div().w(16).flex_none().text_color(mark ?? t.dim).child({ add: "+", del: "−", hunk: "", ctx: " " }[l.kind]))
       .child(div().flex_none().pr(16).text_color(hunk ? t.muted : t.foreground).child(hunk ? l.text || " " : this.code(t, l.text, lang, colors)));
   }
 
@@ -339,6 +368,9 @@ export default class PrFiles extends View {
     const at = (c) => c.path === path && c.side === side && c.line === n;
     // Sizes report zoomed; boxes fit the panel, not the widest line.
     const w = Math.max(200, Math.min(720, this.width / (settings().zoom || 1) - 24));
+    const items = this.prs.get(url)?.threads?.items ?? [];
+    const threads = [...threadsAt(items, path, side, n), ...(l.kind === "ctx" ? threadsAt(items, path, "LEFT", l.oldNo) : [])]
+      .map((th) => card(t, s, th, this.open, w, "th"));
     const out = pendingFor(url).filter(at).map((c) =>
       h_flex().id(`p-${c.id}`).w(w).mx(10).my(5).p(9).gap(8).items_start().rounded(rad(s, 8)).border(1).border_color(t.border).bg(t.popover)
         .child(v_flex().flex_1().min_w(0).gap(5)
@@ -360,17 +392,26 @@ export default class PrFiles extends View {
           .child(this.button(t, s, "draft-cancel", "Cancel", null, false, (_e, cx) => { this.draft = null; cx.notify(); }))
           .child(this.button(t, s, "draft-add", "Add to review", null, true, (_e, cx) => this.addDraft(cx)))));
     }
-    return out;
+    return [...threads, ...out];
   }
 
   diff(t, s, url, file) {
     if (!file) return div().p(12).text_size(12).text_color(t.dim).child("Select a file to view its changes.");
     const lang = langFor(file.name);
-    const colors = PALETTES[settings().dark ? "dark" : "light"];
-    const lines = file.lines.slice(0, MAX_LINES);
+    const colors = paletteFor(t.background);
+    const all = file.lines.slice(0, MAX_LINES);
+    const j = this.jump && this.jump.url === url && this.jump.path === file.name ? this.jump : null;
+    const from = jumpIndex(all, j, (l, j) => l.kind !== "hunk" && (j.side === "LEFT" ? l.oldNo : l.newNo) === j.line);
+    const lines = all.slice(from);
+    const w = Math.max(200, Math.min(720, this.width / (settings().zoom || 1) - 24));
+    const outdated = elsewhereBlock(t, s, elsewhere(this.prs.get(url)?.threads?.items ?? [], file.name), this.open, w, "ot");
     return v_flex().id("pr-diff").flex_1().min_h(0).overflow_y_scrollbar()
-      .child(v_flex().id("pr-diff-x").py(4).overflow_x_scrollbar().font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
-        .children(lines.flatMap((l, i) => [this.line(t, s, l, i, url, file.name, lang, colors), ...this.extras(t, s, url, file.name, l, i)])))
+      .when(from > 0, (el) => el.child(div().id("earlier").mx(10).mt(6).px(8).py(4).rounded(rad(s, 6)).text_size(11).text_color(t.accent).cursor_pointer()
+        .hover((el) => el.bg(t.hover)).on_click((_e, cx) => { this.jump = null; cx.notify(); })
+        .child(label(s, `Show ${from} earlier lines`))))
+      .child(v_flex().id("pr-diff-x").py(4).overflow_x_scrollbar().font_family(settings().font_family ?? "JetBrains Mono").text_size(12.5).line_height("20px")
+        .children(lines.flatMap((l, k) => [this.line(t, s, l, k + from, url, file.name, lang, colors), ...this.extras(t, s, url, file.name, l, k + from)])))
+      .when(Boolean(outdated), (el) => el.child(outdated))
       .when(!file.lines.length, (el) => el.child(div().p(12).text_size(12).text_color(t.dim).child("No text diff (binary, renamed or mode change).")))
       .when(file.lines.length > MAX_LINES, (el) => el.child(div().p(12).text_size(11.5).text_color(t.muted)
         .child(`${file.lines.length - MAX_LINES} more lines; Open review shows the rest on GitHub.`)));

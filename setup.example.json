@@ -1,0 +1,25 @@
+{
+  "repo": "/Users/you/code/your-repo",
+  "github": {
+    "tabs": [
+      { "id": "mine", "label": "Mine", "query": "is:open is:pr repo:your-org/your-repo author:@me sort:updated-desc" },
+      {
+        "id": "reviews",
+        "label": "To review",
+        "query": "is:open is:pr draft:false repo:your-org/your-repo review-requested:@me sort:updated-desc",
+        "action": { "label": "Start review", "prompt": "Review {url} and give me a list of findings. Read-only: don't edit files, push, or post comments." }
+      }
+    ]
+  },
+  "jira": {
+    "cli": "/opt/homebrew/bin/jira",
+    "site": "https://your-site.atlassian.net",
+    "dry_run": false,
+    "statuses": [
+      { "id": "Selected for Development", "label": "Selected", "action": { "label": "Start ticket", "prompt": "Start work on {key}" } },
+      { "id": "In Progress", "label": "In progress" }
+    ]
+  },
+  "pond": { "ignore_words": ["your-repo"] },
+  "demo": { "ticket": "APP-123" }
+}

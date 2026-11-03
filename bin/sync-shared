@@ -1,0 +1,17 @@
+#!/bin/sh
+# Copies each shared module in lib/ into every mod that imports it ("./<name>"). Herdr won't load a module from
+# outside a mod's folder (symlinks included), so each mod keeps its own copy.
+# Usage: bin/sync-shared [--check]   --check: exit 1 if any copy differs from lib/, change nothing.
+cd "$(dirname "$0")/.." || exit 1
+status=0
+for f in lib/*.js; do
+  name=$(basename "$f")
+  for dir in $(grep -l "from \"\./$name\"" mods/*/*.js | xargs -n1 dirname | sort -u); do
+    copy="$dir/$name"
+    if [ -L "$copy" ] || ! cmp -s "$f" "$copy" 2>/dev/null; then
+      if [ "$1" = --check ]; then echo "out of sync: $copy"; status=1
+      else rm -f "$copy"; cp "$f" "$copy"; echo "updated $copy"; fi
+    fi
+  done
+done
+exit $status

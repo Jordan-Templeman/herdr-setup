@@ -1,0 +1,15 @@
+#!/bin/sh
+# After a Herdr update: shows what Herdr changed in the originals our copies are based on
+# (upstream/ holds them as they were when copied), so the change can be carried over by hand.
+# Usage: bin/check-upstream [--accept]   --accept: take the current originals as the new baseline.
+cd "$(dirname "$0")/.." || exit 1
+changed=0
+for f in $(cd upstream && find mods layouts -type f); do
+  if ! cmp -s "upstream/$f" "$f"; then
+    changed=1
+    if [ "$1" = --accept ]; then cp "$f" "upstream/$f"; echo "baseline updated: $f"
+    else echo "== Herdr changed $f since our copy:"; diff -u "upstream/$f" "$f"; fi
+  fi
+done
+[ $changed = 0 ] && echo "No upstream changes since our copies were made."
+exit 0

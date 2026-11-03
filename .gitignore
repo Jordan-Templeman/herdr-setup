@@ -1,0 +1,30 @@
+# Herdr owns most of this folder (shipped mods and layouts are replaced on every start, the rest is
+# app state). Only the custom setup is tracked.
+/*
+!/.gitignore
+!/README.md
+!/install.sh
+!/setup.example.json
+!/hooks/
+!/demo/
+/demo/runs/
+!/bin/
+!/layouts/
+/layouts/*
+!/layouts/field.json
+!/mods/
+/mods/*
+!/mods/inbox/
+!/mods/jira-preview/
+!/mods/pr-preview/
+!/mods/field/
+!/mods/chat/
+!/mods/pane-plus/
+!/mods/inspect/
+!/lib/
+# Copied into every mod by Herdr.
+mods/*/gpui-kit.d.ts
+mods/*/jsconfig.json
+mods/*/.review.json
+mods/chat/.cache/
+!/upstream/

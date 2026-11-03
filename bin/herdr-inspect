@@ -1,0 +1,15 @@
+#!/bin/sh
+# Prints what Herdr's mods see right now: panes, agents, terminals (with their OSC 7501 records and
+# labels, which `hc ls` leaves out) and shared mod state. Needs the pond on screen.
+# Usage: bin/herdr-inspect [section]   section: panes | agents | terminals | shared | focused
+dir="$(cd "$(dirname "$0")/.." && pwd)/inspect"
+mkdir -p "$dir"; before=$(stat -f %m "$dir/state.json" 2>/dev/null || echo 0)
+touch "$dir/request"
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 0.3
+  now=$(stat -f %m "$dir/state.json" 2>/dev/null || echo 0)
+  [ ! -e "$dir/request" ] && [ "$now" != "$before" -o "$before" = 0 ] && break
+done
+[ -e "$dir/request" ] && { rm -f "$dir/request"; echo "No answer: is the pond (field mod) on screen?" >&2; exit 1; }
+if [ -n "$1" ]; then python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))[sys.argv[2]], indent=1))' "$dir/state.json" "$1"
+else cat "$dir/state.json"; fi

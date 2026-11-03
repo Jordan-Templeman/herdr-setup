@@ -1,0 +1,8 @@
+#!/bin/sh
+# Git pre-commit: shared modules match lib/, and every tracked mod loads.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+bin/sync-shared --check || { echo "Run bin/sync-shared, then commit again."; exit 1; }
+for m in mods/*/; do
+  git ls-files --error-unmatch "$m" >/dev/null 2>&1 || continue
+  out=$(env -i HOME="$HOME" PATH="$PATH" "$HOME/.local/bin/herdr-app" check "$m" 2>&1) || { echo "$out"; exit 1; }
+done

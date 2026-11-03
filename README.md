@@ -9,6 +9,8 @@ A [Herdr](https://herdr.dev) config for running Claude Code (and Codex) agents f
   comments, submit a review). Start a review or ticket session from a row; a running session links back.
 - **Chat**: any Claude agent as a chat instead of a terminal (CLI / Chat switch in the pane header,
   or ⌘⇧K): images, links, slash commands, and answering its prompts.
+- **Search** (⌘⇧O): agents, tabs, PRs, Jira tickets, files (names and contents) and every command in one
+  fuzzy list; Enter opens it, ⌘Enter opens a file in RubyMine. Herdr's own palette stays on ⌘⇧P.
 
 ## Install
 
@@ -24,7 +26,7 @@ git fetch origin && git checkout -f -t origin/main
 ```
 
 Herdr owns most of `~/.config/herdr-app`; `.gitignore` tracks only this setup, so checking it out
-there leaves Herdr's own files alone. `install.sh` creates `setup.json`, adds the ⌘⇧K shortcut,
+there leaves Herdr's own files alone. `install.sh` creates `setup.json`, adds the ⌘⇧K and ⌘⇧O shortcuts,
 adds the status hooks to `~/.claude/settings.json` (backup beside it), and switches to the pond
 layout. Running it again changes nothing.
 

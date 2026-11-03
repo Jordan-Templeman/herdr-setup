@@ -19,6 +19,7 @@
 !/mods/
 /mods/*
 !/mods/inbox/
+!/mods/search/
 !/mods/jira-preview/
 !/mods/pr-preview/
 !/mods/pr-files/

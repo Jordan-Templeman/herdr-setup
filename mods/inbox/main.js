@@ -4,7 +4,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, theme, openOverlay, agents, terminals, window as appWindow } from "herdr";
+import { exec, theme, openOverlay, agents, terminals, shared, setShared, window as appWindow } from "herdr";
 import { sessionFor, sessionIn, statusOf, openSession, startSession } from "./session.js";
 import { setup, fill } from "./setup.js";
 import { style, label, rad, badge, heading, brackets, LETTER } from "./style.js";
@@ -335,9 +335,20 @@ export default class Inbox extends View {
           this.errors[id] = String(e.message ?? e);
         }
       }));
+      this.publish();
       this.loading = false;
       cx.notify();
     });
+  }
+
+  // Every loaded PR and ticket, for the search (shared "inbox.items"); written only when it changed.
+  publish() {
+    const seen = new Set();
+    const items = Object.values(this.data).flat().filter((i) => !seen.has(i.key) && seen.add(i.key)).map((i) => ({
+      key: i.key, title: i.title, url: i.url, preview: i.preview, number: i.number ?? null, repo: i.repo ?? null, branch: i.branch ?? null,
+      meta: i.meta ?? null, status: i.status ?? null, ci: i.ci ?? null, review: i.review ?? null,
+    }));
+    if (JSON.stringify(items) !== JSON.stringify(shared("inbox.items"))) setShared("inbox.items", items);
   }
 
   // Open session when one exists, else the item's start action, else nothing.

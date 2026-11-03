@@ -11,7 +11,7 @@ import { openBeside } from "./beside.js";
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings, openOverlay } from "herdr";
-import { toCli, closeWith } from "./mode.js";
+import { toCli, closeWith, focusAgent } from "./mode.js";
 import { anchorFromUrl } from "./anchor.js";
 import { openChanges } from "./changes.js";
 import { parse, transcriptPath, dashed, imagesScript, screenPrompt } from "./transcript.js";
@@ -318,7 +318,7 @@ export default class Chat extends View {
   showTerminal() {
     // Opened by the pane header's CLI / Chat switch: switch back to the CLI instead.
     if (toCli(this.address)) return;
-    run("agent.focus", { terminal: this.address });
+    focusAgent(this.address);
   }
 
   close() {

@@ -9,8 +9,8 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, spaces, run, theme, settings, terminals, panes, exec, openOverlay, nextCommand, home } from "herdr";
-import { toChat, closeWith, modes } from "./mode.js";
+import { agents, spaces, run, theme, settings, terminals, panes, focused, exec, openOverlay, nextCommand, home, shared, setShared } from "herdr";
+import { toChat, closeWith, modes, focusAgent, convert } from "./mode.js";
 import { serveInspect } from "./inspect.js";
 import { openChanges } from "./changes.js";
 import { setup } from "./setup.js";
@@ -30,6 +30,8 @@ const OUTSIDE_MS = 20000;
 const STATS_MS = 30000;
 // A chat-only tab is closed once it's been seen orphaned this long.
 const ORPHAN_MS = 4000;
+// Agents already running this soon after the pond starts keep their terminal (Herdr loading them).
+const SETTLE_MS = 5000;
 
 // Rough API prices, $ per million tokens: model pattern, input, output, cache read. Cache writes
 // bill 1.25× input (5 min) or 2× (1 h). An estimate: plans and discounts aren't known here.
@@ -227,7 +229,9 @@ export default class Field extends View {
   init(_props, cx) {
     serveInspect(cx);
     cx.spawn(async (cx) => {
-      for (const w of (await setup()).pond?.ignore_words ?? []) FILLER.add(w.toLowerCase());
+      const cfg = await setup();
+      for (const w of cfg.pond?.ignore_words ?? []) FILLER.add(w.toLowerCase());
+      this.chatDefault = cfg.chat?.default !== false;
       cx.notify();
     });
     this.size = { width: 900, height: 220 };
@@ -251,6 +255,13 @@ export default class Field extends View {
     this.hadTerminal = new Set();
     this.orphans = new Map();
     cx.timer.every(2000, () => this.tidy());
+    // Chat-first (setup.json chat.default): new Claude agents move into chat mode once.
+    this.id = Math.random().toString(36).slice(2);
+    this.started = Date.now();
+    this.known = new Set(agents().map((a) => a.address));
+    this.chatDefault ??= true;
+    cx.timer.every(10000, (cx) => cx.spawn(async () => { this.chatDefault = (await setup()).chat?.default !== false; }));
+    cx.timer.every(200, (cx) => this.chatFirst(cx));
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
@@ -265,6 +276,8 @@ export default class Field extends View {
   dismiss(a) {
     const space = spaces().find((sp) => sp.tabs.some((tb) => tb.id === a.tab));
     const others = panes().filter((p) => p.tab === a.tab && p.pane !== a.pane && !p.mod);
+    // Chat mode: closing its terminal's tab ends it, and its chat tab goes too.
+    if (modes()[a.address]?.chatTab && closeWith(a.address)) return;
     closeWith(a.address);
     if (!others.length && (space?.tabs.length ?? 0) > 1) run("tab.close", { id: a.tab, confirmed: true });
     else if (a.pane && others.length) run("pane.close", { pane: a.pane });
@@ -298,15 +311,64 @@ export default class Field extends View {
     for (const a of agents().filter((x) => ok.has(x.address) && resting(x))) this.dismiss(a);
   }
 
-  // Closes tabs left holding only chat views whose terminal has gone.
+  // Moves new Claude agents into chat mode, and agents the CLI / Chat switch asked for.
+  chatFirst(cx) {
+    const asked = shared("pane-plus.convert") ?? {};
+    for (const [term, req] of Object.entries(asked)) {
+      // Another pond copy may be on screen too: the first to claim a request does it.
+      if (!req.by) setShared("pane-plus.convert", { ...asked, [term]: { ...req, by: this.id } });
+      else if (req.by === this.id) {
+        const { [term]: _done, ...rest } = shared("pane-plus.convert") ?? {};
+        setShared("pane-plus.convert", rest);
+        convert(term, req.show, cx);
+      } else if (Date.now() - req.at > 5000) {
+        const { [term]: _stale, ...rest } = shared("pane-plus.convert") ?? {};
+        setShared("pane-plus.convert", rest);
+      }
+      return;
+    }
+    const early = Date.now() - this.started < SETTLE_MS;
+    for (const a of agents()) {
+      if (this.known.has(a.address)) continue;
+      if (early) { this.known.add(a.address); continue; }
+      if (a.app === "codex") { this.known.add(a.address); continue; }
+      const t = terminals().find((x) => x.address === a.address);
+      if (a.app !== "claude-code" || !t?.records?.session || !a.pane || t.parent) continue;
+      this.known.add(a.address);
+      if (this.chatDefault && !modes()[a.address]) setShared("pane-plus.convert", { ...asked, [a.address]: { at: Date.now(), show: false } });
+    }
+  }
+
+  // Closes tabs left holding only chat views whose terminal has gone, and puts a chat-mode agent's
+  // terminal tab away again once Herdr brought it back for attention.
   tidy() {
     const live = new Set(terminals().filter((k) => k.state === "live").map((k) => k.address));
+    const shownTab = focused()?.tab;
+    const tabs = spaces().flatMap((sp) => sp.tabs);
+    for (const [term, m] of Object.entries(modes())) {
+      if (!m.chatTab) continue;
+      // Its terminal has ended: the chat view and its tab go too (a hidden chat copy doesn't check).
+      if (!live.has(term)) {
+        closeWith(term);
+        continue;
+      }
+      const cli = tabs.find((tb) => tb.id === m.cliTab);
+      // Its chat view was closed: the terminal's tab comes back to the lists.
+      if (!panes().some((p) => p.pane === m.chatPane)) {
+        if (cli?.settled) run("tab.unsettle", { id: m.cliTab });
+        const { [term]: _gone, ...rest } = modes();
+        setShared("pane-plus.chat", rest);
+      } else if (!m.cli && cli && !cli.settled && shownTab !== cli.id && agents().find((x) => x.address === term)?.status !== "blocked") {
+        run("tab.settle", { id: cli.id });
+      }
+    }
+    const liveChats = new Set(Object.entries(modes()).filter(([term]) => live.has(term)).map(([, m]) => m.chatPane ?? m.chat));
     const dead = Object.entries(modes()).filter(([term]) => !live.has(term));
     const byTab = new Map();
     for (const p of panes()) byTab.set(p.tab, [...(byTab.get(p.tab) ?? []), p]);
     const now = Date.now();
     for (const [tab, ps] of byTab) {
-      if (ps.some((p) => p.terminal)) {
+      if (ps.some((p) => p.terminal || liveChats.has(p.pane))) {
         this.hadTerminal.add(tab);
         this.orphans.delete(tab);
         continue;
@@ -413,7 +475,7 @@ export default class Field extends View {
         else if (hovered) this.hoveredBaby = null;
         cx.notify();
       })
-      .when(Boolean(b.address), (el) => el.on_click((_e, cx) => { cx.stop_propagation(); run("agent.focus", { terminal: b.address }); }))
+      .when(Boolean(b.address), (el) => el.on_click((_e, cx) => { cx.stop_propagation(); focusAgent(b.address); }))
       .child(div().relative()
         .when(!b.leaving, (el) => el.loop("top", { from: 0, to: b.act ? -2 : -4, period: (b.act ? 1400 : 700) + (h % 400) }))
         // Babies that aren't saying what they do paddle in place.
@@ -678,12 +740,11 @@ export default class Field extends View {
         this.overCritter = null;
         this.unhover(cx);
       })
-      .on_click(() => run("agent.focus", { terminal: a.address }))
+      .on_click(() => focusAgent(a.address))
       // The agent's chat view, in place of its terminal (the pane header's Chat switch).
       .on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
-        const p = panes().find((q) => q.pane === a.pane);
-        if (p) toChat(p, cx);
+        toChat(a.address);
       })
       .child(div().relative().w(width).h(CRITTER * 0.8)
         .child(div().absolute().top(0)

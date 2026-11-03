@@ -50,7 +50,8 @@ export default class Tabs extends View {
     const t = theme();
     const look = style();
     const space = spaces().find(p => p.active);
-    const shown = space?.tabs ?? [];
+    // Settled tabs (a chat-mode agent's terminal) stay out of the bar.
+    const shown = (space?.tabs ?? []).filter(c => !c.settled || c.active);
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);

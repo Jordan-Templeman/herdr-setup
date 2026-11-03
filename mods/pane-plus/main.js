@@ -3,13 +3,13 @@
 // Shows the program's icon (the app's program table), the agent's name or
 // the terminal's title, the folder, and the agent's status; buttons split, zoom and close
 // this pane. Props from the app: { pane, terminal }. Click: focus the pane.
-// A Claude pane also gets a CLI / Chat switch: Chat opens the chat view beside the terminal,
-// zoomed so it takes the terminal's place, and CLI closes it again. The terminal keeps running.
+// A Claude pane also gets a CLI / Chat switch: Chat shows the agent's chat tab and puts its
+// terminal's tab away, CLI brings the terminal's tab back (lib/mode.js). The terminal keeps running.
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, props, run, theme, home, terminals, focused, nextCommand, shared, setShared, layout } from "herdr";
-import { modes, chatFor, toChat, toCli } from "./mode.js";
+import { chatFor, terminalFor, toChat, toCli } from "./mode.js";
 import { openChanges } from "./changes.js";
 import { style, label, badge, LETTER } from "./style.js";
 
@@ -80,8 +80,8 @@ export default class Pane extends View {
       return terminals().find((x) => x.address === p.terminal)?.records?.session || chatFor(p.terminal) || /claude/i.test(p.program?.name ?? "")
         ? { terminal: p.terminal, chat: false } : null;
     }
-    const entry = Object.entries(modes()).find(([, m]) => m.chat === p.pane);
-    return entry ? { terminal: entry[0], chat: true } : null;
+    const terminal = terminalFor(p.pane);
+    return terminal ? { terminal, chat: true } : null;
   }
 
   // An agent's worktree changes, on hover beside the pane buttons.
@@ -111,7 +111,7 @@ export default class Pane extends View {
       .child(label);
     return h_flex().flex_none().p(2).gap(2).rounded(7).bg(t.hover)
       .child(option("cli", "CLI", !sw.chat, () => toCli(sw.terminal)))
-      .child(option("chat", "Chat", sw.chat, (cx) => toChat(p, cx)));
+      .child(option("chat", "Chat", sw.chat, () => toChat(sw.terminal)));
   }
 
   // Deck: two square cells, the active one filled amber. LCARS: two pills, the active one lilac.
@@ -134,7 +134,7 @@ export default class Pane extends View {
     return h_flex().flex_none().gap(lcars ? 3 : 0)
       .when(!lcars, (el) => el.border(1).border_color(t.border))
       .child(option("cli", "CLI", !sw.chat, () => toCli(sw.terminal)))
-      .child(option("chat", "Chat", sw.chat, (cx) => toChat(p, cx)));
+      .child(option("chat", "Chat", sw.chat, () => toChat(sw.terminal)));
   }
 
   render(cx) {

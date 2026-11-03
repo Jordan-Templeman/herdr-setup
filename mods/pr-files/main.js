@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { exec, focused, agents, terminals, theme, settings, shared, setShared, openOverlay, home, notify } from "herdr";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
-import { modes } from "./mode.js";
+import { terminalFor } from "./mode.js";
 import { parseDiff, agentMessage } from "./diff.js";
 import { sendToAgent, agentName } from "./session.js";
 import { tokens, langFor, paletteFor } from "./highlight.js";
@@ -69,7 +69,7 @@ export default class PrFiles extends View {
   focusedAgent() {
     const f = focused();
     let address = f?.terminal;
-    if (!address && f?.pane) address = Object.entries(modes()).find(([, m]) => m.chat === f.pane)?.[0];
+    if (!address && f?.pane) address = terminalFor(f.pane);
     return address && agents().some((a) => a.address === address) ? address : null;
   }
 

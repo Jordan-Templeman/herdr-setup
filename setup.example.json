@@ -21,5 +21,6 @@
     ]
   },
   "pond": { "ignore_words": ["your-repo"] },
+  "chat": { "default": true },
   "demo": { "ticket": "APP-123" }
 }

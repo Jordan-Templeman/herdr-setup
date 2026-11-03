@@ -6,6 +6,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Editor, EditorState } from "gpui-base";
+import { focusAgent } from "./mode.js";
 import { agents, spaces, panes, focused, commands, layouts, exec, run, theme, settings, props, closeOverlay, openOverlay, shared, nextCommand, readTextFile, home } from "herdr";
 import { style, label, rad, badge, heading, LETTER } from "./style.js";
 import { setup } from "./setup.js";
@@ -210,13 +211,13 @@ export default class Search extends View {
     };
 
     add("agents", agents().map((a) => item("agents", `agent:${a.address}`, a.title || a.program?.name || a.address,
-      `${a.space_name} › ${a.tab_name}`, { run: "agent.focus", args: { terminal: a.address } }, { status: a.status, program: a.program })));
+      `${a.space_name} › ${a.tab_name}`, { agent: a.address }, { status: a.status, program: a.program })));
 
     const tabs = [];
     for (const s of spaces()) {
       tabs.push(item("tabs", `space:${s.id}`, s.name, `space · ${s.tabs.length} tab${s.tabs.length > 1 ? "s" : ""}${s.branch ? ` · ${s.branch}` : ""}`,
         { run: "space.select", args: { id: s.id } }, { status: s.status, space: true }));
-      for (const tb of s.tabs) {
+      for (const tb of s.tabs.filter((x) => !x.settled)) {
         tabs.push(item("tabs", `tab:${tb.id}`, tb.named ? tb.name : `Tab ${tb.name}`, s.name, { run: "tab.select", args: { id: tb.id } }, { status: tb.status }));
       }
     }
@@ -305,7 +306,7 @@ export default class Search extends View {
     const out = [];
     if (!this.q.trim() && !this.only) {
       const live = new Map(Object.values(g).flat().map((r) => [r.id, r]));
-      const recent = this.recent.map((r) => live.get(r.id) ?? (r.act?.run && /^(agent|space|tab):/.test(r.id) ? null : { ...r, hits: [], subHits: [] })).filter(Boolean).slice(0, 8);
+      const recent = this.recent.map((r) => live.get(r.id) ?? ((r.act?.run || r.act?.agent) && /^(agent|space|tab):/.test(r.id) ? null : { ...r, hits: [], subHits: [] })).filter(Boolean).slice(0, 8);
       if (recent.length) {
         out.push({ head: { id: "recent", title: "Recent" } });
         recent.forEach((r) => out.push({ item: r }));
@@ -379,7 +380,8 @@ export default class Search extends View {
       const pane = focused()?.pane;
       if (pane) run("pane.split", { direction: "right", pane, mod: "search", props: viewer });
       else run("tab.new", { name: a.file.split("/").pop(), mod: "search", props: viewer });
-    } else if (a.overlay) openOverlay(a.overlay);
+    } else if (a.agent) focusAgent(a.agent);
+    else if (a.overlay) openOverlay(a.overlay);
     else run(a.run, a.args);
   }
 

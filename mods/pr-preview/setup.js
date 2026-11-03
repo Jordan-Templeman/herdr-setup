@@ -20,6 +20,8 @@ export const DEFAULTS = {
   jira: null,
   // Words the pond leaves out of agent names (your repo's name, say).
   pond: { ignore_words: [] },
+  // default: new Claude agents open as a chat, their terminal in a tab put away (the CLI / Chat switch).
+  chat: { default: true },
 };
 
 export async function setup() {

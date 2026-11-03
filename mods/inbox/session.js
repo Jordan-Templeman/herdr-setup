@@ -3,6 +3,7 @@
 
 import { hc, exec, run, spaces, panes, terminals, agents, notify, home } from "herdr";
 import { setup } from "./setup.js";
+import { focusAgent, modes } from "./mode.js";
 
 // The live session for an item: one this file started, else an older tab named after the item.
 export function sessionFor(key) {
@@ -39,7 +40,7 @@ export async function sendToAgent(address, text) {
 
 export const statusOf = (address) => agents().find((a) => a.address === address)?.status ?? null;
 
-export const openSession = (address) => run("agent.focus", { terminal: address });
+export const openSession = (address) => focusAgent(address);
 
 // Starts Claude on `prompt` in the space for setup.json's repo (else the shown one), in a tab named
 // after the item, and shows it.
@@ -61,6 +62,7 @@ export async function startSession(key, prompt, url) {
     const pane = panes().find((p) => p.terminal === address);
     if (pane) {
       run("tab.rename", { id: pane.tab, name: key });
+      if (modes()[address]?.chatTab) run("tab.rename", { id: modes()[address].chatTab, name: key });
       break;
     }
     await exec("sleep", ["0.3"]);

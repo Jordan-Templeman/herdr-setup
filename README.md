@@ -8,7 +8,9 @@ A [Herdr](https://herdr.dev) config for running Claude Code (and Codex) agents f
 - **Inbox**: your GitHub PRs and Jira tickets, with PR and ticket previews (diffs, inline review
   comments, submit a review). Start a review or ticket session from a row; a running session links back.
 - **Chat**: any Claude agent as a chat instead of a terminal (CLI / Chat switch in the pane header,
-  or ⌘⇧K): images, links, slash commands, and answering its prompts.
+  or ⌘⇧K): images, links, slash commands, and answering its prompts. New Claude agents open as a
+  chat, their terminal in a tab put away until you switch to CLI (`"chat": { "default": false }` in
+  `setup.json` turns that off).
 - **Search** (⌘⇧O): agents, tabs, PRs, Jira tickets, files (names and contents) and every command in one
   fuzzy list; Enter opens it, ⌘Enter opens a file in RubyMine. Herdr's own palette stays on ⌘⇧P.
 

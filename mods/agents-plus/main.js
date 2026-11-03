@@ -5,6 +5,7 @@ import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 import { style, label as cased } from "./style.js";
+import { focusAgent } from "./mode.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -318,7 +319,7 @@ export default class Agents extends View {
           .child(div().w(12).h_full().flex_none().bg(t.ansi5))
           .child(h_flex().flex_1().h_full().px(4).items_end().justify_end().bg(panel(t, a.status)).hover((s) => s.opacity(0.82))
             .font_family(DIN).text_size(14).text_color("#000000")
-            .on_click(() => run("pane.focus", { pane: a.pane }))
+            .on_click(() => focusAgent(a.address))
             .child(String(i + 1).padStart(2, "0")));
       }
       if (collapsed) {
@@ -330,7 +331,7 @@ export default class Agents extends View {
           .items_center()
           .gap(4)
           .hover((s) => s.bg(t.hover))
-          .on_click(() => run("pane.focus", { pane: a.pane }))
+          .on_click(() => focusAgent(a.address))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
@@ -371,7 +372,7 @@ export default class Agents extends View {
               else if (this.hovered === a.address) this.hovered = null;
               cx.notify();
             })
-            .on_click(() => run("pane.focus", { pane: a.pane }))
+            .on_click(() => focusAgent(a.address))
             .child(div().text_size(12).flex_none().child(`${String(i + 1).padStart(2, "0")} ${WORD[a.status] ?? ""}`))
             .when(a.status === "working", (el) => el.child(div().text_size(12).flex_none().pb(0).frames(["\u25d0", "\u25d3", "\u25d1", "\u25d2"], 220)))
             .when(subs.length > 0, (el) => el.child(fold(a, subs).text_color("#000000")))
@@ -399,7 +400,7 @@ export default class Agents extends View {
           else if (this.hovered === a.address) this.hovered = null;
           cx.notify();
         })
-        .on_click(() => run("pane.focus", { pane: a.pane }))
+        .on_click(() => focusAgent(a.address))
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();

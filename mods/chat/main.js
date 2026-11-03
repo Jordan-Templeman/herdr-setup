@@ -9,7 +9,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
-import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings } from "herdr";
+import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings, openOverlay } from "herdr";
 import { toCli, closeWith } from "./mode.js";
 import { openChanges } from "./changes.js";
 import { parse, transcriptPath, dashed, imagesScript, screenPrompt } from "./transcript.js";
@@ -46,6 +46,15 @@ const short = (url) => url.replace(/^https?:\/\/(www\.)?/, "").replace(/(.{48}).
 const PASTE_SH = `osascript -e 'try' -e 'set d to the clipboard as «class PNGf»' -e 'set f to open for access POSIX file "'"$1"'" with write permission' -e 'write d to f' -e 'close access f' -e 'return "ok"' -e 'end try'`;
 
 const WORD = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
+
+// Jira tickets and GitHub pull requests open in the inbox's previews; other links in the browser.
+function openLink(url, cx) {
+  const ticket = /atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)/.exec(url);
+  if (ticket) return openOverlay({ mod: "jira-preview", props: { key: ticket[1] }, kind: "dialog", width: 820, height: 0.9 });
+  const pr = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
+  if (pr) return openOverlay({ mod: "pr-preview", props: { url: `https://github.com/${pr[1]}/${pr[2]}/pull/${pr[3]}` }, kind: "dialog", width: 0.85, height: 0.9 });
+  cx.open_url(url);
+}
 
 export default class Chat extends View {
   init(_props, cx) {
@@ -332,15 +341,51 @@ export default class Chat extends View {
           .child(div().flex_1().min_w(0).text_color(t.muted).child(x.error ? `${x.summary} — ${x.error}` : x.summary))))));
   }
 
-  // Markdown, with image paths drawn as pictures and bare links made clickable.
+  // Markdown, with image paths drawn as pictures and links opening the inbox's previews. A fenced
+  // markdown block (a drafted comment, a PR body) is rendered too, not shown as source.
   prose(id, text) {
     const pics = imagePaths(text);
     const body = text.replace(IMAGE_PATH, "").replace(/\[Image #\d+\]/g, "").trim();
     const t = theme();
+    const parts = body.split(/^```(?:markdown|md)[ \t]*\n([\s\S]*?)^```[ \t]*$/m);
     return v_flex().gap(6)
       .when(pics.length > 0, (el) => el.child(h_flex().flex_wrap().gap(6).children(pics.map((p, k) =>
         this.thumb(t, p.replace(/^~/, home()), `${id}-${k}`)))))
-      .when(Boolean(body), (el) => el.child(TextView.markdown(id, body).selectable(true)));
+      .children(parts.map((part, k) => (k % 2 ? this.draft(t, `${id}-d${k}`, part.trim()) : part.trim()
+        ? TextView.markdown(`${id}-${k}`, part.trim()).selectable(true).on_link_click((url, cx) => openLink(url, cx))
+        : null)).filter(Boolean));
+  }
+
+  // Rendered markdown with a Copy button for its source. <details> sections fold under their summary.
+  draft(t, key, raw) {
+    const st = this.s ?? style();
+    const pieces = raw.split(/<details>\s*<summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/);
+    const copied = this.copied === key;
+    return v_flex().w_full().gap(8).p(10).rounded(rad(st, 8)).border(1).border_color(t.border).bg(t.surface)
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(10.5).text_color(t.dim).child(label(st, "Markdown")))
+        .child(div().id(`${key}-copy`).px(8).py(2).rounded(rad(st, 6)).text_size(11).text_color(copied ? t.done : t.muted)
+          .hover((s) => s.bg(t.hover))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => {
+            cx.write_to_clipboard(raw);
+            this.copied = key;
+            cx.notify();
+            cx.timer.after(1500, (cx) => { this.copied = null; cx.notify(); });
+          })
+          .child(label(st, copied ? "Copied" : "Copy"))))
+      .children(pieces.map((p, k) => {
+        if (k % 3 === 0) return p.trim() ? TextView.markdown(`${key}-${k}`, p.trim()).selectable(true).on_link_click((url, cx) => openLink(url, cx)) : null;
+        if (k % 3 === 2) return null;
+        const fold = `${key}-f${k}`;
+        const open = this.open.has(fold);
+        return v_flex().id(fold).gap(6).px(8).py(6).rounded(rad(st, 6)).border(1).border_color(t.border).bg(t.background)
+          .child(h_flex().id(`${fold}-h`).gap(6).items_center().cursor_pointer()
+            .on_click((_e, cx) => { open ? this.open.delete(fold) : this.open.add(fold); cx.notify(); })
+            .child(svg(`${ICONS}/chevron-${open ? "down" : "right"}.svg`).size(11).text_color(t.muted))
+            .child(div().flex_1().text_size(12.5).font_semibold().text_color(t.foreground).child(p.trim())))
+          .when(open, (el) => el.child(TextView.markdown(`${fold}-b`, pieces[k + 1].trim()).selectable(true).on_link_click((url, cx) => openLink(url, cx))));
+      }).filter(Boolean));
   }
 
   // A picture (absolute path), or a file tile when it isn't a picture or isn't copied in yet.

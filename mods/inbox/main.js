@@ -30,7 +30,8 @@ const PR_FIELDS = `number title url isDraft updatedAt state baseRefName headRefN
 const SEARCH = `query($q: String!) {
   search(query: $q, type: ISSUE_ADVANCED, first: 30) {
     nodes { ... on PullRequest { ${PR_FIELDS} reviewDecision
-      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } }
+      commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes {
+        ... on CheckRun { name conclusion status } ... on StatusContext { context state } } } } } } } } }
   }
 }`;
 const STACK_DEPTH = 8;
@@ -49,12 +50,32 @@ const prBase = (p) => ({
   preview: "pr-preview",
 });
 
+// What a hover over the CI badge says: failing and running checks by name, the rest as counts.
+function checksLabel(rollup) {
+  const runs = (rollup?.contexts?.nodes ?? []).map((c) => ({
+    name: c.name ?? c.context,
+    result: (c.conclusion ?? (c.status && c.status !== "COMPLETED" ? "PENDING" : c.state) ?? "PENDING").toUpperCase(),
+  })).filter((c) => c.name);
+  if (!runs.length) return null;
+  const by = (...rs) => runs.filter((c) => rs.includes(c.result));
+  const failing = by("FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE");
+  const pending = by("PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED", "WAITING");
+  const counts = [["passed", by("SUCCESS").length], ["cancelled", by("CANCELLED").length], ["skipped", by("SKIPPED", "NEUTRAL").length]]
+    .filter(([, n]) => n).map(([w, n]) => `${n} ${w}`).join(" · ");
+  return [
+    ...(failing.length ? [`Failing (${failing.length})`, ...failing.map((c) => `  ✕ ${c.name}`)] : []),
+    ...(pending.length ? [`Running (${pending.length})`, ...pending.map((c) => `  … ${c.name}`)] : []),
+    counts,
+  ].filter(Boolean).join("\n");
+}
+
 async function gh(q, action) {
   const r = await exec("gh", ["api", "graphql", "-f", `q=${q}`, "-f", `query=${SEARCH}`]);
   if (r.code !== 0) throw new Error(r.stderr.trim() || "gh failed");
   return JSON.parse(r.stdout).data.search.nodes.filter((p) => p.number).map((p) => ({
     ...prBase(p),
     ci: CI[p.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state] ?? null,
+    checks: checksLabel(p.commits?.nodes?.[0]?.commit?.statusCheckRollup),
     review: p.isDraft ? null : p.reviewDecision ?? null,
     meta: [p.isDraft ? "draft" : null, p.author?.login, ago(p.updatedAt)].filter(Boolean).join(" · "),
     action: action ? { label: fill(action.label, { url: p.url }), prompt: fill(action.prompt, { url: p.url }) } : null,
@@ -280,13 +301,16 @@ export default class Inbox extends View {
     const review = { APPROVED: t.ansi2, CHANGES_REQUESTED: t.blocked }[item.review] ?? t.dim;
     if (s.name !== "soft") {
       return h_flex().gap(3).items_center().flex_none()
-        .when(Boolean(ci), (el) => el.child(div().when(item.ci === "pending", (d) => d.loop("opacity", { from: 0.3, to: 1, period: 1100 }))
+        .when(Boolean(ci), (el) => el.child(div().id(`ci-${item.key}`).when(Boolean(item.checks), (d) => d.tooltip(item.checks))
+          .when(item.ci === "pending", (d) => d.loop("opacity", { from: 0.3, to: 1, period: 1100 }))
           .child(badge(s, t, "C", ci))))
-        .when(Boolean(REVIEW[item.review]), (el) => el.child(badge(s, t, "R", review, item.review !== "REVIEW_REQUIRED")));
+        .when(Boolean(REVIEW[item.review]), (el) => el.child(div().id(`rv-${item.key}`).tooltip(REVIEW[item.review])
+          .child(badge(s, t, "R", review, item.review !== "REVIEW_REQUIRED"))));
     }
     return h_flex().gap(6).items_center().flex_none()
-      .when(Boolean(ci), (el) => el.child(div().size(7).rounded(4).bg(ci)
-        .when(item.ci === "pending", (d) => d.loop("opacity", { from: 0.3, to: 1, period: 1100 }))))
+      .when(Boolean(ci), (el) => el.child(div().id(`ci-${item.key}`).p(3).when(Boolean(item.checks), (d) => d.tooltip(item.checks))
+        .child(div().size(7).rounded(4).bg(ci)
+          .when(item.ci === "pending", (d) => d.loop("opacity", { from: 0.3, to: 1, period: 1100 })))))
       .when(Boolean(REVIEW[item.review]), (el) => el.child(div().text_size(10.5).text_color(review).child(REVIEW[item.review])));
   }
 

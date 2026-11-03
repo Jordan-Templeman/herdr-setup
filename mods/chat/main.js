@@ -389,6 +389,20 @@ export default class Chat extends View {
   }
 
   message(t, m, i) {
+    // Another session's message: who and its summary on one line, the rest a click away.
+    if (m.role === "relay") {
+      const st = this.s ?? style();
+      const key = `r-${i}`;
+      const open = this.open.has(key);
+      return v_flex().id(key).w_full().gap(6).px(10).py(6).rounded(rad(st, 8)).border(1).border_color(t.border)
+        .cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => { open ? this.open.delete(key) : this.open.add(key); cx.notify(); })
+        .child(h_flex().gap(8).items_center()
+          .child(svg(`${ICONS}/chevron-${open ? "down" : "right"}.svg`).size(11).text_color(t.muted))
+          .child(div().flex_none().text_size(11).font_semibold().text_color(t.accent).child(label(st, m.from)))
+          .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(m.summary || m.text.split("\n")[0])))
+        .when(open, (el) => el.child(div().pl(19).text_size(12).child(this.prose(`rb-${i}`, m.text))));
+    }
     // What a command printed: its first lines, the rest a click away.
     if (m.role === "output") {
       const key = `o-${i}`;

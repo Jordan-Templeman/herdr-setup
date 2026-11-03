@@ -1,6 +1,7 @@
 // A Claude Code transcript (one JSON record per line) as chat messages:
 //   { role: "user", text, images, command?, queued? }   images: cache names ("<uuid>-<n>.<ext>"), see imagesScript
-//   { role: "output", text }   what a slash command printed
+//   { role: "output", text }
+//   { role: "relay", from, summary, text }   a message from another session   what a slash command printed
 //   { role: "assistant", parts: [{ kind: "text", text } | { kind: "tool", id, name, summary, status }] }
 // Sub-agent (sidechain) and meta records are left out, and so is text Claude Code injects
 // into user turns (command echoes, system reminders), which starts with a tag.
@@ -29,6 +30,31 @@ function command(text) {
 
 const stdout = (text) => (/<local-command-std(?:out|err)>([\s\S]*?)<\/local-command-std(?:out|err)>/.exec(text)?.[1] ?? "")
   .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim();
+
+// A message relayed from another session (a teammate, a helper agent): one entry per sender, with
+// its one-line summary, so the chat can fold them.
+const RELAY = /^\s*Another Claude session sent a message:/;
+function relays(text) {
+  if (!RELAY.test(text)) return null;
+  const rest = text.replace(RELAY, "").trim();
+  const out = [...rest.matchAll(/<teammate-message([^>]*)>([\s\S]*?)<\/teammate-message>/g)].map(([, attrs, body]) =>
+    relay(/teammate_id="([^"]*)"/.exec(attrs)?.[1], /summary="([^"]*)"/.exec(attrs)?.[1], body.trim()));
+  return out.length ? out : [relay(null, null, rest)];
+}
+
+// A status ping (JSON like {"type":"idle_notification","result":…}) reads as its state plus the
+// first line of any result; anything else keeps its summary or first line.
+function relay(from, summary, body) {
+  try {
+    const j = JSON.parse(body);
+    const state = j.type === "idle_notification" ? (j.idleReason === "available" ? "idle" : j.idleReason ?? "idle") : (j.type ?? "").replace(/_/g, " ");
+    const result = String(j.result ?? j.message ?? "").trim();
+    const first = result.split("\n")[0].replace(/[*#`]/g, "").trim();
+    return { role: "relay", from: from ?? j.from ?? "session", summary: [state, first].filter(Boolean).join(" · "), text: result || state };
+  } catch {
+    return { role: "relay", from: from ?? "session", summary: summary || body.split("\n")[0].slice(0, 140), text: body };
+  }
+}
 
 export function parse(text) {
   const messages = [];
@@ -87,7 +113,9 @@ export function parse(text) {
         continue;
       }
       if (typeof content === "string") {
-        if (content.trim() && !INJECTED.test(content)) messages.push({ role: "user", text: content.trim(), images: [] });
+        const relayed = relays(content);
+        if (relayed) messages.push(...relayed);
+        else if (content.trim() && !INJECTED.test(content)) messages.push({ role: "user", text: content.trim(), images: [] });
         continue;
       }
       let said = "";
@@ -103,7 +131,9 @@ export function parse(text) {
           }
         }
       }
-      if (said || images.length) messages.push({ role: "user", text: said, images });
+      const relayed = relays(said);
+      if (relayed) messages.push(...relayed);
+      else if (said || images.length) messages.push({ role: "user", text: said, images });
       continue;
     }
 

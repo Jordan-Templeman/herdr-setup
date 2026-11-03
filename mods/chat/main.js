@@ -11,6 +11,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings } from "herdr";
 import { toCli, closeWith } from "./mode.js";
+import { openChanges } from "./changes.js";
 import { parse, transcriptPath, dashed, imagesScript, screenPrompt } from "./transcript.js";
 import { parseCodex, isCodex } from "./codex.js";
 import { style, label, rad, badge, LETTER } from "./style.js";
@@ -476,6 +477,12 @@ export default class Chat extends View {
         .on_click((_e, cx) => this.stop(cx))
         .child(svg(`${ICONS}/square.svg`).size(11).text_color(lcars ? t.background : t.blocked))
         .child(div().text_size(soft ? 11.5 : 10.5).text_color(lcars ? t.background : t.foreground).when(lcars, (el) => el.font_family(st.head).text_size(14)).child(label(st, "Stop")))))
+      .when(Boolean(this.address), (el) => el.child(h_flex().id("to-changes").gap(5).items_center().px(8).py(lcars ? 3 : 4).rounded(rad(st, 6))
+        .border(lcars ? 0 : 1).border_color(t.border).when(lcars, (el) => el.bg(t.ansi5))
+        .hover((s) => (lcars ? s.opacity(0.85) : s.bg(t.hover)))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click(() => openChanges(this.address))
+        .child(div().text_size(soft ? 11.5 : 10.5).text_color(lcars ? t.background : t.foreground).when(lcars, (el) => el.font_family(st.head).text_size(14)).child(label(st, "Changes")))))
       .when(Boolean(this.address), (el) => el.child(h_flex().id("to-terminal").gap(5).items_center().px(8).py(lcars ? 3 : 4).rounded(rad(st, 6))
         .border(lcars ? 0 : 1).border_color(t.border).when(lcars, (el) => el.bg(t.ansi4))
         .hover((s) => (lcars ? s.opacity(0.85) : s.bg(t.hover)))

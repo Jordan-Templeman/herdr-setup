@@ -1,12 +1,14 @@
 // A GitHub PR as a dialog: state, review, checks, branch, size, description. Opened by the
 // inbox with props { url, key, action }; the footer starts or reopens its agent session.
+// With props { terminal } instead it shows that agent's worktree changes (git reads only) and sends
+// line comments to the agent's session as one message.
 
 import { View, div, svg } from "gpui-kit";
 import { sessionFor, statusOf, openSession, startSession } from "./session.js";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { tokens, langFor, PALETTES } from "./highlight.js";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
-import { exec, spaces, run, theme, notify, props, closeOverlay, settings, home, appHome, shared, setShared } from "herdr";
+import { exec, hc, spaces, run, theme, notify, props, closeOverlay, settings, home, appHome, shared, setShared, terminals, agents } from "herdr";
 import * as fs from "fs/promises";
 
 const ICONS = "mods/workspace-chrome";
@@ -127,7 +129,11 @@ export default class PrPreview extends View {
     this.submitting = null;
     this.reviewError = null;
     this.reply = TextareaState.new({ placeholder: "Leave a comment (markdown)", rows: 4 });
-    this.load(cx);
+    this.terminal = props()?.terminal ?? null;
+    // Pending line comments live under the PR's url, or the agent's terminal.
+    this.key = this.terminal ? `local:${this.terminal}` : props()?.url;
+    if (this.terminal) this.loadLocal(cx);
+    else this.load(cx);
   }
 
   load(cx) {
@@ -141,6 +147,75 @@ export default class PrPreview extends View {
       const r = await exec("gh", ["pr", "view", url, "--json", FIELDS], { cwd: home() });
       if (r.code !== 0) this.error = r.stderr.trim() || "gh failed";
       else this.pr = JSON.parse(r.stdout);
+      cx.notify();
+    });
+  }
+
+  // The agent's changes against where its branch left the base: commits plus uncommitted and
+  // untracked files. Read-only git (no optional locks), so the agent's worktree is never touched.
+  loadLocal(cx) {
+    this.view = "files";
+    this.files = null;
+    this.diffError = null;
+    cx.spawn(async (cx) => {
+      const term = terminals().find((x) => x.address === this.terminal);
+      const cwd = term?.cwd;
+      if (!cwd) {
+        this.diffError = "That agent's terminal has closed.";
+        return cx.notify();
+      }
+      const git = (...args) => exec("git", ["--no-optional-locks", "-C", cwd, ...args]);
+      const top = await git("rev-parse", "--show-toplevel");
+      if (top.code !== 0) {
+        this.diffError = `${cwd} isn't a git checkout.`;
+        return cx.notify();
+      }
+      const root = top.stdout.trim();
+      // The base: the remote's default branch, else the first of these that exists.
+      let base = null;
+      const head = await git("rev-parse", "--abbrev-ref", "origin/HEAD");
+      if (head.code === 0) base = head.stdout.trim();
+      for (const b of ["origin/development", "origin/main", "origin/master", "development", "main", "master"]) {
+        if (base) break;
+        if ((await git("rev-parse", "--verify", "-q", b)).code === 0) base = b;
+      }
+      const mb = (base && (await git("merge-base", "HEAD", base)).stdout.trim()) || "HEAD";
+      this.branch = (await git("branch", "--show-current")).stdout.trim();
+      this.base = (base ?? "HEAD").replace(/^origin\//, "");
+      const tracked = await exec("git", ["--no-optional-locks", "-C", root, "diff", "--no-color", "--no-ext-diff", mb]);
+      const others = (await exec("git", ["--no-optional-locks", "-C", root, "ls-files", "--others", "--exclude-standard"])).stdout
+        .split("\n").filter(Boolean).slice(0, 60);
+      const added = await Promise.all(others.map((f) => exec("git", ["--no-optional-locks", "-C", root, "diff", "--no-color", "--no-index", "/dev/null", f])));
+      if (tracked.code !== 0) this.diffError = tracked.stderr.trim() || "git diff failed";
+      else {
+        this.files = parseDiff([tracked.stdout, ...added.map((r) => r.stdout)].join("\n"));
+        for (const f of this.files) this.expanded.add(f.name);
+      }
+      cx.notify();
+    });
+  }
+
+  // Pending line comments as one message to the agent, which reads it like any prompt.
+  sendComments(cx) {
+    const pending = pendingFor(this.key);
+    if (!pending.length) return;
+    const note = this.reply.value().trim();
+    const lines = pending.map((c, i) => `${i + 1}. \`${c.path}:${c.line}\`${c.side === "LEFT" ? " (removed line)" : ""}: ${c.body.replace(/\n+/g, " ")}`);
+    const text = ["Review comments on your current changes, from the diff view. Work through each, then summarise what you changed.",
+      note, ...lines].filter(Boolean).join("\n\n");
+    this.submitting = "send";
+    this.reviewError = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const r = await hc(["send", "--json", this.terminal, text]);
+      this.submitting = null;
+      if (r.code === 9) this.reviewError = "The agent is waiting on a prompt in its terminal. Answer it, then send again.";
+      else if (r.code !== 0) this.reviewError = r.stderr.trim() || "Couldn't send.";
+      else {
+        notify({ title: `Sent ${pending.length} comment${pending.length === 1 ? "" : "s"} to the agent`, level: "info", timeout: 3000 });
+        setPendingFor(this.key, []);
+        this.reply.set_value("");
+      }
       cx.notify();
     });
   }
@@ -252,27 +327,26 @@ export default class PrPreview extends View {
     const body = this.draft.input.value().trim();
     if (!body) return;
     const { path, side, line } = this.draft;
-    const url = props().url;
-    setPendingFor(url, [...pendingFor(url), { id: `${Date.now()}`, path, side, line, body }]);
+    setPendingFor(this.key, [...pendingFor(this.key), { id: `${Date.now()}`, path, side, line, body }]);
     this.draft = null;
     cx.notify();
   }
 
   // Pending comments and the open draft that belong under a line; at(c) says whether c is on it.
   extras(t, path, at, i) {
-    const out = pendingFor(props().url).filter((c) => c.path === path && at(c)).map((c) =>
-      h_flex().id(`p-${c.id}`).mx(12).my(6).p(10).gap(10).items_start().rounded(rad(this.s, 8)).border(1).border_color(t.border).bg(t.popover)
+    const out = pendingFor(this.key).filter((c) => c.path === path && at(c)).map((c) =>
+      h_flex().id(`p-${c.id}`).max_w(760).mx(12).my(6).p(10).gap(10).items_start().rounded(rad(this.s, 8)).border(1).border_color(t.border).bg(t.popover)
         .child(v_flex().flex_1().min_w(0).gap(6)
           .child(h_flex().gap(8).items_center()
             .child(div().px(6).py(1).rounded(rad(this.s, 5)).bg(`${t.working}22`).text_size(10.5).text_color(t.working).child(label(this.s, "Pending")))
             .child(div().text_size(11).text_color(t.dim).child(`${c.side === "LEFT" ? "old" : "new"} line ${c.line}`)))
           .child(TextView.markdown(`pb-${c.id}`, c.body)))
         .child(div().id(`pd-${c.id}`).p(3).rounded(rad(this.s, 5)).hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => { setPendingFor(props().url, pendingFor(props().url).filter((x) => x.id !== c.id)); cx.notify(); })
+          .on_click((_e, cx) => { setPendingFor(this.key, pendingFor(this.key).filter((x) => x.id !== c.id)); cx.notify(); })
           .child(svg(`${ICONS}/x.svg`).size(13).text_color(t.muted))));
     const d = this.draft;
     if (d && d.path === path && at(d)) {
-      out.push(v_flex().id(`draft-${i}`).mx(12).my(6).p(10).gap(8).rounded(rad(this.s, 8)).border(1).border_color(t.accent).bg(t.popover)
+      out.push(v_flex().id(`draft-${i}`).max_w(760).mx(12).my(6).p(10).gap(8).rounded(rad(this.s, 8)).border(1).border_color(t.accent).bg(t.popover)
         .child(div().text_size(11).text_color(t.dim).child(`Comment on ${d.side === "LEFT" ? "old" : "new"} line ${d.line}`))
         .child(div().id("draft-box").rounded(rad(this.s, 6)).border(1).border_color(t.border).p(6)
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -282,7 +356,7 @@ export default class PrPreview extends View {
             .on_click((_e, cx) => { this.draft = null; cx.notify(); }).child("Cancel"))
           .child(div().id("draft-add").px(10).py(5).rounded(rad(this.s, 6)).bg(t.solid).text_size(12).text_color(t.solid_foreground)
             .hover((s) => s.opacity(0.85))
-            .on_click((_e, cx) => this.addDraft(cx)).child("Add to review"))));
+            .on_click((_e, cx) => this.addDraft(cx)).child(this.terminal ? "Add comment" : "Add to review"))));
     }
     return out;
   }
@@ -295,7 +369,7 @@ export default class PrPreview extends View {
       .child(div().text_size(12).text_color(t.muted).child(label(this.s, `${this.files.length} files`)))
       .child(div().text_size(12).text_color(t.ansi2).child(`+${adds}`))
       .child(div().text_size(12).text_color(t.ansi1).child(`−${dels}`))
-      .child(div().text_size(12).text_color(t.dim).child(label(this.s, `${this.files.filter((f) => this.viewed.has(f.name)).length} / ${this.files.length} viewed`)))
+      .when(!this.terminal, (el) => el.child(div().text_size(12).text_color(t.dim).child(label(this.s, `${this.files.filter((f) => this.viewed.has(f.name)).length} / ${this.files.length} viewed`))))
       .child(div().flex_1())
       .child(div().id("toggle-all").px(8).py(4).rounded(rad(this.s, 6)).text_size(12).text_color(t.muted)
         .hover((s) => s.bg(t.hover))
@@ -339,7 +413,16 @@ export default class PrPreview extends View {
   }
 
   submitButton(t) {
-    const n = pendingFor(props().url).length;
+    const n = pendingFor(this.key).length;
+    if (this.terminal) {
+      return h_flex().id("send-comments").gap(6).items_center().px(11).py(4).rounded(rad(this.s, 7))
+        .bg(n ? t.solid : t.surface).when(!n, (el) => el.border(1).border_color(t.border))
+        .hover((s) => s.opacity(0.85))
+        .on_click((_e, cx) => this.sendComments(cx))
+        .child(svg(`${ICONS}/terminal.svg`).size(13).text_color(n ? t.solid_foreground : t.muted))
+        .child(div().text_size(12).text_color(n ? t.solid_foreground : t.muted)
+          .child(label(this.s, this.submitting === "send" ? "Sending…" : n ? `Send to agent · ${n}` : "Click a line number to comment")));
+    }
     return h_flex().id("submit-review").gap(6).items_center().px(11).py(4).rounded(rad(this.s, 7)).bg(t.solid)
       .hover((s) => s.opacity(0.85))
       .on_click((_e, cx) => { this.composing = true; this.reviewError = null; cx.notify(); })
@@ -366,7 +449,7 @@ export default class PrPreview extends View {
             .child(div().flex_1().min_w(0).truncate().font_family(mono).text_size(12).text_color(t.foreground).child(f.name))
             .child(div().text_size(11.5).text_color(t.ansi2).child(`+${f.adds}`))
             .child(div().text_size(11.5).text_color(t.ansi1).child(`−${f.dels}`))
-            .child(h_flex().id(`v-${fi}`).ml(6).gap(6).items_center().px(8).py(3).rounded(rad(this.s, 6)).border(1)
+            .when(!this.terminal, (el) => el.child(h_flex().id(`v-${fi}`).ml(6).gap(6).items_center().px(8).py(3).rounded(rad(this.s, 6)).border(1)
               .border_color(this.viewed.has(f.name) ? t.accent : t.border)
               .when(this.viewed.has(f.name), (el) => el.bg(`${t.accent}1a`))
               .hover((s) => s.bg(t.hover))
@@ -376,7 +459,7 @@ export default class PrPreview extends View {
                 .border_color(this.viewed.has(f.name) ? t.accent : t.input)
                 .when(this.viewed.has(f.name), (el) => el.bg(t.accent).flex().items_center().justify_center()
                   .child(svg(`${ICONS}/check.svg`).size(10).text_color(t.accent_foreground))))
-              .child(div().text_size(11.5).text_color(this.viewed.has(f.name) ? t.foreground : t.muted).child(label(this.s, "Viewed")))))
+              .child(div().text_size(11.5).text_color(this.viewed.has(f.name) ? t.foreground : t.muted).child(label(this.s, "Viewed"))))))
           .when(open && split, (el) => el.child(v_flex().py(4).overflow_hidden()
             .children(splitRows(shown).flatMap((row, i) => [
               this.splitRow(t, row, `${fi}-${i}`, mono, f.name),
@@ -389,7 +472,7 @@ export default class PrPreview extends View {
             ]))))
           .when(open, (el) => el
             .when(f.lines.length > MAX_LINES, (el) => el.child(div().px(12).py(8).text_size(12).text_color(t.muted)
-              .child(`${f.lines.length - MAX_LINES} more lines; open Files changed on GitHub for the rest.`))));
+              .child(`${f.lines.length - MAX_LINES} more lines${this.terminal ? "." : "; open Files changed on GitHub for the rest."}`))));
       })));
   }
 
@@ -505,9 +588,37 @@ export default class PrPreview extends View {
     return div().px(8).py(2).rounded(rad(this.s, 6)).bg(`${color}22`).text_size(11).text_color(color).child(text);
   }
 
+  // The agent's worktree changes: header, the diff with line comments, and a note to send with them.
+  renderLocal(t, st) {
+    const agent = agents().find((a) => a.address === this.terminal);
+    const name = agent?.title || agent?.tab_name || this.terminal;
+    const header = h_flex().px(20).py(12).gap(10).items_center().border_b(1).border_color(t.border)
+      .child(st.name === "soft" ? div().text_size(12).text_color(t.muted).child("Agent changes") : heading(st, t, "Agent changes", st.name === "lcars" ? "07-dif" : "07.dif"))
+      .child(div().flex_1().min_w(0).truncate().text_size(12.5).font_semibold().text_color(t.foreground).child(name))
+      .when(Boolean(this.branch), (el) => el.child(this.pill(`${this.branch} → ${this.base}`, t.muted)))
+      .child(div().id("refresh").px(8).py(4).rounded(rad(st, 6)).text_size(11.5).text_color(t.muted).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.loadLocal(cx)).child(label(st, "Refresh")))
+      .child(div().id("close").p(4).rounded(rad(st, 6)).hover((s) => s.bg(t.hover))
+        .on_click(() => this.close())
+        .child(svg(`${ICONS}/x.svg`).size(15).text_color(t.muted)));
+    const empty = this.files && this.files.length === 0;
+    const n = pendingFor(this.key).length;
+    const note = n > 0 && v_flex().px(20).py(10).gap(6).border_t(1).border_color(t.border).bg(t.surface)
+      .child(div().id("note").rounded(rad(st, 8)).border(1).border_color(t.border).bg(t.popover).p(8)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(Textarea.new(this.reply).h(48).text_size(12.5).text_color(t.foreground)))
+      .when(Boolean(this.reviewError), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.reviewError)))
+      .child(div().text_size(11.5).text_color(t.dim).child(`An optional note goes above your ${n} line comment${n === 1 ? "" : "s"}; nothing touches git or GitHub.`));
+    return v_flex().size_full().relative().bg(t.popover).child(header)
+      .child(empty ? div().p(20).text_size(12.5).text_color(t.muted).child("No changes on this branch yet.") : this.filesView(t))
+      .when(Boolean(note), (el) => el.child(note))
+      .when(st.name === "deck", (el) => el.children(brackets(t, t.accent, 14)));
+  }
+
   render() {
     const t = theme();
     const st = (this.s = style());
+    if (this.terminal) return this.renderLocal(t, st);
     const soft = st.name === "soft";
     const lcars = st.name === "lcars";
     const { key, url } = props() ?? {};

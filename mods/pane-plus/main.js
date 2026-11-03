@@ -10,6 +10,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, props, run, theme, home, terminals, focused, nextCommand, shared, setShared } from "herdr";
 import { modes, chatFor, toChat, toCli } from "./mode.js";
+import { openChanges } from "./changes.js";
 import { style, label, badge, LETTER } from "./style.js";
 
 function icon(p, size, color) {
@@ -78,6 +79,15 @@ export default class Pane extends View {
     }
     const entry = Object.entries(modes()).find(([, m]) => m.chat === p.pane);
     return entry ? { terminal: entry[0], chat: true } : null;
+  }
+
+  // An agent's worktree changes, on hover beside the pane buttons.
+  changesButton(t, p) {
+    if (!p.terminal || !p.program?.agent) return null;
+    return div().id(`ph-c-${p.pane}`).p(3).rounded(4).text_color(t.dim)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click((_e, cx) => { cx.stop_propagation(); openChanges(p.terminal); })
+      .child(svg("mods/pane-plus/diff.svg").size(14));
   }
 
   modeSwitch(t, p, sw) {
@@ -155,6 +165,7 @@ export default class Pane extends View {
       .when(st === "blocked", el => el.child(div().flex_none().px(6).h(18).flex().items_center().rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).child("Needs you")))
       .when(st === "done", el => el.child(div().size(7).flex_none().rounded(4).bg(t.done)))
       .when(this.hovered, el => el
+        .children([this.changesButton(t, p)].filter(Boolean))
         .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
         .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
         .child(this.button(t, `ph-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))
@@ -197,6 +208,7 @@ export default class Pane extends View {
       .when(st === "blocked", (el) => el.child(badge(s, t, "Needs you", t.blocked)))
       .when(st === "done", (el) => el.child(badge(s, t, LETTER.done, t.done)))
       .when(this.hovered, (el) => el
+        .children([this.changesButton(t, p)].filter(Boolean))
         .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
         .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
         .child(this.button(t, `ph-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))

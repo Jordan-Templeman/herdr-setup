@@ -7,6 +7,8 @@ A [Herdr](https://herdr.dev) config for running Claude Code (and Codex) agents f
   Hover for its task, branch and token use; click to focus; right-click for its chat.
 - **Inbox**: your GitHub PRs and Jira tickets, with PR and ticket previews (diffs, inline review
   comments, submit a review). Start a review or ticket session from a row; a running session links back.
+  The Jira tab is a work queue: In progress on top, then Up next by priority and backlog rank, with
+  blocked tickets last and new ones marked; starting a ticket moves it to `jira.start_moves_to`.
 - **Chat**: any Claude agent as a chat instead of a terminal (CLI / Chat switch in the pane header,
   or ⌘⇧K): images, links, slash commands, and answering its prompts. New Claude agents open as a
   chat, their terminal in a tab put away until you switch to CLI (`"chat": { "default": false }` in

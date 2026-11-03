@@ -7,9 +7,9 @@ import { View, div, svg } from "gpui-kit";
 import { sessionFor, statusOf, openSession, startSession } from "./session.js";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { setup } from "./setup.js";
+import { jiraGet, jiraWrite, moveOnStart } from "./jira.js";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
-import { exec, spaces, run, theme, notify, props, closeOverlay, appHome } from "herdr";
-import * as fs from "fs/promises";
+import { exec, theme, notify, props, closeOverlay } from "herdr";
 
 const ICONS = "mods/workspace-chrome";
 
@@ -114,30 +114,15 @@ export default class JiraPreview extends View {
     });
   }
 
-  // The jira CLI has no transition list, so ask the REST API as the CLI's user (`jira me`, $JIRA_API_TOKEN).
+  // The jira CLI has no transition list, so ask the REST API as the CLI's user.
   loadTransitions(key, cx) {
     cx.spawn(async (cx) => {
-      const me = await exec(this.jira.cli ?? "jira", ["me"]);
-      const r = me.code === 0 ? await exec("/bin/sh", ["-c", 'curl -sf -u "$1:$JIRA_API_TOKEN" "$2"', "sh", me.stdout.trim(),
-        `${this.jira.site}/rest/api/3/issue/${key}/transitions`]) : me;
+      const r = await jiraGet(this.jira, `/rest/api/3/issue/${key}/transitions`);
       this.transitions = r.code === 0
         ? JSON.parse(r.stdout).transitions.map((x) => ({ name: x.name, to: x.to?.name, category: x.to?.statusCategory?.key }))
         : { error: r.stderr.trim() || "Couldn't list transitions (is JIRA_API_TOKEN set?)" };
       cx.notify();
     });
-  }
-
-  // Runs a jira command that changes the ticket, or with jira.dry_run logs it to inspect/jira-dry-run.log.
-  async jiraWrite(args) {
-    const cli = this.jira.cli ?? "jira";
-    if (!this.jira.dry_run) return exec(cli, args);
-    const line = [cli, ...args].map((a) => (/^[\w./:-]+$/.test(a) ? a : `'${a.replace(/'/g, "'\\''")}'`)).join(" ");
-    const file = `${appHome()}/inspect/jira-dry-run.log`;
-    await fs.mkdir(`${appHome()}/inspect`, { recursive: true });
-    const before = await fs.readFile(file, "utf8").catch(() => "");
-    await fs.writeFile(file, `${before}${new Date().toISOString()} ${line}\n`);
-    notify({ title: "Dry run: jira not called", body: line, level: "info", timeout: 5000 });
-    return { code: 0, stdout: "", stderr: "" };
   }
 
   // kind: "move" transitions to this.target; "comment" posts the composer's text.
@@ -151,8 +136,8 @@ export default class JiraPreview extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       const r = kind === "move"
-        ? await this.jiraWrite(["issue", "move", key, this.target.name])
-        : await this.jiraWrite(["issue", "comment", "add", key, body, "--no-input"]);
+        ? await jiraWrite(this.jira, ["issue", "move", key, this.target.name])
+        : await jiraWrite(this.jira, ["issue", "comment", "add", key, body, "--no-input"]);
       this.busy = false;
       if (r.code !== 0) this.actionError = r.stderr.trim() || r.stdout.trim() || "jira failed";
       else {
@@ -230,9 +215,9 @@ export default class JiraPreview extends View {
         () => { openSession(session); this.close(); });
     }
     if (action) return button("start", "terminal", action.label, true, (_e, cx) => {
-      // Closing ends this dialog's tasks, so close only once the session is up and its tab named.
+      // Closing ends this dialog's tasks, so close only once the session is up, its tab named and the ticket moved.
       cx.spawn(async () => {
-        await startSession(key, action.prompt, url);
+        if (await startSession(key, action.prompt, url)) await moveOnStart(this.jira, key, this.issue?.status);
         this.close();
       });
     });

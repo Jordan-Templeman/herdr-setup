@@ -15,6 +15,7 @@
     "cli": "/opt/homebrew/bin/jira",
     "site": "https://your-site.atlassian.net",
     "dry_run": false,
+    "start_moves_to": "In Progress",
     "statuses": [
       { "id": "Selected for Development", "label": "Selected", "action": { "label": "Start ticket", "prompt": "Start work on {key}" } },
       { "id": "In Progress", "label": "In progress" }

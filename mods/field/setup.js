@@ -15,8 +15,8 @@ export const DEFAULTS = {
       },
     ],
   },
-  // null hides the Jira tab. { cli, site, statuses: [{ id, label, action? }], dry_run? }
-  // dry_run: the Jira preview logs its move/comment commands to inspect/jira-dry-run.log instead of running them.
+  // null hides the Jira tab. { cli, site, statuses: [{ id, label, action? }], dry_run?, start_moves_to? }
+  // A status with an action is "Up next"; the rest are "In progress". Unset keys come from JIRA below.
   jira: null,
   // Words the pond leaves out of agent names (your repo's name, say).
   pond: { ignore_words: [] },
@@ -24,10 +24,16 @@ export const DEFAULTS = {
   chat: { default: true },
 };
 
+// dry_run: Jira writes (move, comment, the start move) go to inspect/jira-dry-run.log instead of running.
+// start_moves_to: the status a ticket's start action moves it to; null leaves it where it is.
+export const JIRA = { dry_run: false, start_moves_to: "In Progress" };
+
 export async function setup() {
   try {
     const text = await readTextFile(`${appHome()}/setup.json`);
-    return text ? { ...DEFAULTS, ...JSON.parse(text) } : DEFAULTS;
+    if (!text) return DEFAULTS;
+    const mine = JSON.parse(text);
+    return { ...DEFAULTS, ...mine, jira: mine.jira ? { ...JIRA, ...mine.jira } : null };
   } catch (e) {
     return { ...DEFAULTS, error: `setup.json: ${e.message ?? e}` };
   }

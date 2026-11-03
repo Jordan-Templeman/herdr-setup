@@ -7,9 +7,11 @@ import { v_flex, h_flex } from "gpui-base";
 import { exec, theme, openOverlay, agents, terminals, shared, setShared, window as appWindow } from "herdr";
 import { sessionFor, sessionIn, statusOf, openSession, startSession } from "./session.js";
 import { setup, fill } from "./setup.js";
+import { jiraGet, moveOnStart } from "./jira.js";
 import { style, label, rad, badge, heading, brackets, LETTER } from "./style.js";
 
 const REFRESH_MS = 120000;
+const JIRA_REFRESH_MS = 60000;
 
 const ago = (iso) => {
   if (!iso) return "";
@@ -175,24 +177,71 @@ function stackEntries(items, outside) {
   return entries;
 }
 
-async function jira(cfg) {
+// Jira's priorities, most urgent first; anything else sorts after them.
+const PRIORITY = ["Blocker", "Critical", "Highest", "High", "Medium", "Low", "Lowest"];
+const priorityRank = (p) => (PRIORITY.indexOf(p) + 1 || PRIORITY.length + 1);
+
+// The names of statuses in Jira's done category, read once; null until read, so a ticket blocked by one
+// counts as resolved. Without them, done-sounding names count.
+let doneStatuses = null;
+async function loadDoneStatuses(cfg) {
+  if (doneStatuses) return;
+  const r = await jiraGet(cfg, "/rest/api/3/status");
+  try {
+    const all = JSON.parse(r.stdout);
+    if (!Array.isArray(all) || !all.length) return;
+    const names = (cat) => new Set(all.filter((x) => (x.statusCategory?.key === "done") === cat).map((x) => x.name.toLowerCase()));
+    const open = names(false);
+    doneStatuses = new Set([...names(true)].filter((n) => !open.has(n)));
+  } catch { /* fall back to names */ }
+}
+const resolved = (status) => {
+  const n = (status ?? "").toLowerCase();
+  return doneStatuses ? doneStatuses.has(n) : /^(done|closed|resolved|released|abandoned|deferred|cancel|won't)/.test(n);
+};
+
+// The queue: assigned tickets in setup.json's statuses, in backlog (rank) order, with priority and open blockers.
+export async function jira(cfg) {
   const jql = cfg.jql ?? `assignee = currentUser() AND status in (${cfg.statuses.map((s) => `"${s.id}"`).join(", ")})`;
-  const r = await exec(cfg.cli ?? "jira", ["issue", "list", "-q", jql, "--plain", "--no-headers",
-    "--columns", "key,status,summary", "--paginate", "25"]);
-  if (r.code !== 0) throw new Error(r.stderr.trim() || "jira failed");
-  return r.stdout.split("\n").filter(Boolean).map((line) => {
-    const [key, status, ...rest] = line.split("\t").filter((s) => s !== "");
+  const [r] = await Promise.all([
+    exec(cfg.cli ?? "jira", ["issue", "list", "-q", jql, "--raw", "--paginate", "50", "--order-by", "rank", "--reverse"]),
+    loadDoneStatuses(cfg).catch(() => {}),
+  ]);
+  if (r.code !== 0) {
+    if (/No result found/i.test(r.stderr)) return [];
+    throw new Error(r.stderr.trim() || "jira failed");
+  }
+  return JSON.parse(r.stdout).map((issue, rank) => {
+    const { key, fields: f } = issue;
+    const status = f.status?.name;
     const action = cfg.statuses.find((s) => s.id === status)?.action;
+    const blockedBy = (f.issueLinks ?? f.issuelinks ?? [])
+      .filter((l) => l.type?.inward === "is blocked by" && l.inwardIssue && !resolved(l.inwardIssue.fields?.status?.name))
+      .map((l) => l.inwardIssue.key);
     return {
       key,
-      title: rest.join(" "),
+      title: f.summary ?? "",
       url: `${cfg.site}/browse/${key}`,
       meta: status,
       status,
+      priority: f.priority?.name ?? null,
+      rank,
+      blockedBy,
+      queued: Boolean(action),
       preview: "jira-preview",
       action: action ? { label: fill(action.label, { key }), prompt: fill(action.prompt, { key }) } : null,
     };
   });
+}
+
+// "In progress" (in rank order) above "Up next": ready before blocked, then priority, then rank.
+export function jiraSections(items) {
+  const next = items.filter((i) => i.queued).sort((a, b) =>
+    (a.blockedBy.length > 0) - (b.blockedBy.length > 0) || priorityRank(a.priority) - priorityRank(b.priority) || a.rank - b.rank);
+  return [
+    { id: "doing", label: "In progress", items: items.filter((i) => !i.queued) },
+    { id: "next", label: "Up next", items: next },
+  ].filter((sec) => sec.items.length);
 }
 
 export default class Inbox extends View {
@@ -204,11 +253,15 @@ export default class Inbox extends View {
     this.data = {};
     this.parents = {};
     try { this.collapsed = new Set(JSON.parse(localStorage.getItem("collapsedStacks") ?? "[]")); } catch { this.collapsed = new Set(); }
+    // Tickets you've opened (or that were there on the first load); an Up next ticket outside it is new.
+    try { this.jiraSeen = JSON.parse(localStorage.getItem("jiraSeen")); } catch { this.jiraSeen = null; }
+    this.jiraSeen = Array.isArray(this.jiraSeen) ? new Set(this.jiraSeen) : null;
     this.errors = {};
     this.loading = false;
     this.alerted = null;
     this.refresh(cx);
     cx.timer.every(REFRESH_MS, (cx) => this.refresh(cx));
+    cx.timer.every(JIRA_REFRESH_MS, (cx) => this.refresh(cx, "jira"));
     this.watchAgents();
     cx.timer.every(1000, () => this.watchAgents());
   }
@@ -314,19 +367,20 @@ export default class Inbox extends View {
       .when(Boolean(REVIEW[item.review]), (el) => el.child(div().text_size(10.5).text_color(review).child(REVIEW[item.review])));
   }
 
-  refresh(cx) {
-    if (this.loading) return;
-    this.loading = true;
+  // Everything, or with `only` "jira" just the Jira queue (quietly, on its own faster timer).
+  refresh(cx, only) {
+    if (this.loading || (only && this.loadingJira)) return;
+    if (only) this.loadingJira = true; else this.loading = true;
     cx.notify();
     cx.spawn(async (cx) => {
       this.cfg = await setup();
-      const jobs = Object.fromEntries(this.cfg.github.tabs.map((g) => [g.id, async () => {
+      const jobs = only ? {} : Object.fromEntries(this.cfg.github.tabs.map((g) => [g.id, async () => {
         const items = await gh(g.query, g.action);
         // A failed parent lookup leaves the stack short rather than failing the tab.
         try { this.parents[g.id] = await stackParents(items); } catch { this.parents[g.id] ??= []; }
         return items;
       }]));
-      if (this.cfg.jira) jobs.jira = () => jira(this.cfg.jira);
+      if (this.cfg.jira) jobs.jira = async () => this.noteJira(await jira(this.cfg.jira));
       await Promise.all(Object.entries(jobs).map(async ([id, job]) => {
         try {
           this.data[id] = await job();
@@ -336,9 +390,29 @@ export default class Inbox extends View {
         }
       }));
       this.publish();
-      this.loading = false;
+      if (only) this.loadingJira = false; else this.loading = false;
       cx.notify();
     });
+  }
+
+  // Marks Up next tickets you haven't opened as new; the first load counts everything as seen.
+  noteJira(items) {
+    const keys = new Set(items.map((i) => i.key));
+    this.jiraSeen = this.jiraSeen ? new Set([...this.jiraSeen].filter((k) => keys.has(k))) : keys;
+    this.saveSeen();
+    for (const i of items) i.fresh = i.queued && !this.jiraSeen.has(i.key);
+    return items;
+  }
+
+  seeJira(item) {
+    if (!item.fresh) return;
+    item.fresh = false;
+    this.jiraSeen?.add(item.key);
+    this.saveSeen();
+  }
+
+  saveSeen() {
+    localStorage.setItem("jiraSeen", JSON.stringify([...(this.jiraSeen ?? [])]));
   }
 
   // Every loaded PR and ticket, for the search (shared "inbox.items"); written only when it changed.
@@ -363,8 +437,14 @@ export default class Inbox extends View {
       .hover((s) => s.bg(t.solid).text_color(t.solid_foreground).border_color(t.solid))
       .on_click((_e, cx) => {
         cx.stop_propagation();
-        if (session) openSession(session);
-        else cx.spawn(async () => { await startSession(item.key, item.action.prompt, item.url); });
+        if (session) { openSession(session); return; }
+        this.seeJira(item);
+        cx.spawn(async (cx) => {
+          const started = await startSession(item.key, item.action.prompt, item.url);
+          if (!started || item.preview !== "jira-preview") return;
+          const moved = await moveOnStart(this.cfg.jira, item.key, item.status);
+          if (moved?.code === 0 && !this.cfg.jira.dry_run) this.refresh(cx, "jira");
+        });
       })
       .when(Boolean(session), (el) => el.child(div().size(6).rounded(3).bg(dot)
         .when(status === "working" || status === "blocked", (d) => d.loop("opacity", { from: 0.3, to: 1, period: 1100 }))))
@@ -372,6 +452,7 @@ export default class Inbox extends View {
   }
 
   preview(item) {
+    this.seeJira(item);
     openOverlay({
       mod: item.preview,
       props: { key: item.key, url: item.url, action: item.action ?? null },
@@ -401,10 +482,38 @@ export default class Inbox extends View {
         .child(div().flex_1().text_size(soft ? 11 : 10).text_color(t.dim).truncate().child(soft ? item.meta ?? "" : label(s, item.meta ?? "")))
         .children([this.itemButton(t, item, s)].filter(Boolean)))
       .child(h_flex().gap(8).items_center()
+        .children([item.priority && this.priorityBadge(t, s, item.priority)].filter(Boolean))
         .child(div().flex_1().min_w(0).text_size(soft ? 12.5 : 11.5).text_color(soft ? t.foreground : t.muted).truncate().child(item.title))
+        .when(Boolean(item.fresh), (el) => el.child(this.newMark(t, s)))
         .when(item.preview === "pr-preview", (el) => el.child(this.prStatus(t, item, s))))
+      .when(Boolean(item.blockedBy?.length), (el) => el.child(this.blockedTag(t, s, item)))
       .when(Boolean(m?.warn), (el) => el.child(div().text_size(soft ? 10.5 : 9.5).text_color(t.working).truncate()
         .child(label(s, `Parent ${m.warn.parent} · retarget to ${m.warn.to}`))));
+  }
+
+  // A ticket's priority: a tinted pill (soft) or a filled tile (deck, lcars).
+  priorityBadge(t, s, priority) {
+    const color = { Blocker: t.blocked, Critical: t.blocked, Highest: t.blocked, High: t.working, Medium: t.ansi4, Low: t.ansi6 }[priority] ?? t.dim;
+    if (s.name !== "soft") return badge(s, t, priority, color, priority !== "Lowest");
+    return div().flex_none().px(6).rounded(rad(s, 5)).bg(`${color}22`).text_size(10).font_semibold().text_color(color).child(priority);
+  }
+
+  newMark(t, s) {
+    if (s.name !== "soft") return badge(s, t, "New", t.accent);
+    return div().flex_none().px(6).rounded(rad(s, 5)).bg(t.accent).text_size(10).font_semibold().text_color(t.accent_foreground).child("new");
+  }
+
+  // "Blocked by GS5-2824" (+N more): opens the blocker.
+  blockedTag(t, s, item) {
+    const [first, ...rest] = item.blockedBy;
+    const soft = s.name === "soft";
+    const text = `Blocked by ${first}${rest.length ? ` +${rest.length}` : ""}`;
+    return h_flex().child(h_flex().id(`blk-${item.key}`).flex_none().px(soft ? 6 : 4).rounded(rad(s, 5)).border(1).border_color(`${t.blocked}88`)
+      .cursor_pointer()
+      .when(rest.length > 0, (el) => el.tooltip(`Blocked by ${item.blockedBy.join(", ")}`))
+      .hover((el) => el.bg(`${t.blocked}22`))
+      .on_click((_e, cx) => { cx.stop_propagation(); this.preview({ key: first, url: `${this.cfg.jira.site}/browse/${first}`, preview: "jira-preview" }); })
+      .child(div().text_size(soft ? 10.5 : 9.5).text_color(t.blocked).child(label(s, text))));
   }
 
   // A stack position: "2/3", or "2a/3" beside a sibling.
@@ -513,11 +622,23 @@ export default class Inbox extends View {
     const all = this.data[this.tab];
     if (!all) return div().p(16).text_size(12).text_color(t.muted).child("Loading…");
     const items = this.tab === "jira" && this.jiraFilter !== "all" ? all.filter((i) => i.status === this.jiraFilter) : all;
-    const entries = this.tab === "jira" ? items.map((item) => ({ item })) : stackEntries(items, this.parents[this.tab] ?? []);
-    return items.length === 0
-      ? div().p(16).text_size(12).text_color(t.muted).child("Nothing here. Nice.")
-      : v_flex().id("rows").flex_1().px(s.name === "soft" ? 6 : 10).pb(10).gap(s.name === "soft" ? 0 : 3).overflow_y_scrollbar()
-        .children(entries.map((e) => (e.item ? this.row(t, e.item, s) : this.stack(t, s, e))));
+    if (items.length === 0) return div().p(16).text_size(12).text_color(t.muted).child("Nothing here. Nice.");
+    const rows = v_flex().id("rows").flex_1().px(s.name === "soft" ? 6 : 10).pb(10).gap(s.name === "soft" ? 0 : 3).overflow_y_scrollbar();
+    if (this.tab === "jira") {
+      return rows.children(jiraSections(items).flatMap((sec) => [this.section(t, s, sec), ...sec.items.map((item) => this.row(t, item, s))]));
+    }
+    return rows.children(stackEntries(items, this.parents[this.tab] ?? []).map((e) => (e.item ? this.row(t, e.item, s) : this.stack(t, s, e))));
+  }
+
+  // A queue section's heading and count.
+  section(t, s, sec) {
+    const soft = s.name === "soft";
+    const lcars = s.name === "lcars";
+    return h_flex().id(`sec-${sec.id}`).px(soft ? 8 : 2).pt(soft ? 8 : 6).pb(soft ? 2 : 3).gap(6).items_center()
+      .child(div().text_size(soft ? 11 : lcars ? 14 : 10).font_semibold().when(!soft, (el) => el.font_bold())
+        .when(lcars, (el) => el.font_family(s.head)).text_color(soft ? t.muted : sec.id === "doing" ? t.working : t.accent)
+        .child(label(s, sec.label)))
+      .child(div().text_size(10).text_color(t.dim).child(soft ? String(sec.items.length) : String(sec.items.length).padStart(2, "0")));
   }
 
   jiraFilters(t, all) {

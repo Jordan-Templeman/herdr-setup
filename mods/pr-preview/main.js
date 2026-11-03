@@ -1005,10 +1005,12 @@ export default class PrPreview extends View {
       .child(button("open", "git-branch", "Open on GitHub", false, () => { exec("open", [url]); this.close(); }))
       .children([this.sessionButton(button)].filter(Boolean));
 
+    // The Drafts list sits above the view, like a drawer; the view keeps its toolbar and scrolls below it.
     if (this.showDrafts && p && this.view !== "overview") {
-      body = h_flex().flex_1().min_h(0).child(v_flex().flex_1().min_w(0).min_h(0).child(body))
-        .child(v_flex().id("draft-list").w(360).flex_none().min_h(0).px(10).py(12).border_l(1).border_color(t.border).overflow_y_scrollbar()
-          .child(draftList(t, st, this.drafts, (d, cx) => this.pickDraft(d, cx))));
+      body = v_flex().flex_1().min_h(0).w_full()
+        .child(v_flex().id("draft-list").flex_none().w_full().max_h(240).px(14).py(8).border_b(1).border_color(t.border).bg(t.surface).overflow_y_scrollbar()
+          .child(draftList(t, st, this.drafts, (d, cx) => { this.showDrafts = false; this.pickDraft(d, cx); })))
+        .child(body);
     }
     return v_flex().size_full().relative().bg(t.popover).child(header).child(body)
       .when(this.composing && Boolean(p), (el) => el.child(this.composer(t, button)))

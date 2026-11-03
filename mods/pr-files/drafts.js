@@ -243,7 +243,7 @@ export class Drafts {
   }
 }
 
-const btn = (t, s, id, text, primary, go) => div().id(id).px(10).py(4).rounded(rad(s, 6)).text_size(11.5)
+const btn = (t, s, id, text, primary, go) => div().id(id).flex_none().px(10).py(4).rounded(rad(s, 6)).text_size(11.5)
   .when(primary, (el) => el.bg(t.solid).text_color(t.solid_foreground).hover((el) => el.opacity(0.85)))
   .when(!primary, (el) => el.border(1).border_color(t.border).text_color(t.foreground).hover((el) => el.bg(t.hover)))
   .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -305,7 +305,7 @@ export function draftList(t, s, ctl, onPick) {
   };
   return v_flex().gap(4)
     .when(n > 0, (el) => el.child(h_flex().px(6).pb(4).gap(8).items_center()
-      .child(div().flex_1().text_size(11).text_color(t.dim).child("Adds to your pending review; you submit it."))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child("Adds to your pending review; you submit it."))
       .child(btn(t, s, "dl-all", ctl.busy?.id === "all" ? "Adding…" : ctl.confirm === "all" ? `Click again: add ${n}` : `Post all as review · ${n}`, true, (cx) => ctl.postAll(cx)))))
     .children(all.map((p) => v_flex().id(`dl-${p.d.id}`).px(6).py(4).gap(2).rounded(rad(s, 6)).cursor_pointer()
       .hover((el) => el.bg(t.hover)).on_click((_e, cx) => onPick(p, cx))

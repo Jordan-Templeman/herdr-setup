@@ -684,6 +684,42 @@ export default class PrPreview extends View {
   }
 
 
+  // Draft ⇄ ready for review on an open PR. The first click asks, the second does it.
+  draftToggle(t, p) {
+    if (!p || p.state !== "OPEN") return null;
+    const toReady = p.isDraft;
+    const text = this.flipping ? "Updating…" : this.confirmFlip ? (toReady ? "Click to confirm: ready" : "Click to confirm: draft")
+      : toReady ? "Ready for review" : "Convert to draft";
+    return div().id("draft-toggle").px(10).py(3).rounded(rad(this.s, 6)).text_size(11.5)
+      .border(1).border_color(this.confirmFlip ? t.accent : t.border)
+      .when(this.confirmFlip, (el) => el.bg(`${t.accent}22`))
+      .text_color(this.confirmFlip ? t.accent : t.foreground)
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => {
+        if (this.flipping) return;
+        if (!this.confirmFlip) {
+          this.confirmFlip = true;
+          cx.notify();
+          cx.timer.after(4000, (cx) => { this.confirmFlip = false; cx.notify(); });
+          return;
+        }
+        this.confirmFlip = false;
+        this.flipping = true;
+        cx.notify();
+        cx.spawn(async (cx) => {
+          const r = await ghWrite(["pr", "ready", props().url, ...(toReady ? [] : ["--undo"])]);
+          this.flipping = false;
+          if (r.code !== 0) notify({ title: "Couldn't change the PR", body: r.stderr.trim(), level: "error", timeout: 5000 });
+          else {
+            notify({ title: toReady ? "Ready for review" : "Converted to draft", body: props().key, level: "info", timeout: 3000 });
+            if (!r.dry) this.load(cx);
+          }
+          cx.notify();
+        });
+      })
+      .child(label(this.s, text));
+  }
+
   field(t, name, value) {
     if (!value) return null;
     const soft = this.s.name === "soft";
@@ -736,7 +772,7 @@ export default class PrPreview extends View {
     const state = !p ? null
       : p.state === "MERGED" ? ["Merged", t.ansi5]
       : p.state === "CLOSED" ? ["Closed", t.blocked]
-      : p.isDraft ? ["Draft", t.muted]
+      : p.isDraft ? ["Draft", t.working]
       : ["Open", t.done];
     const review = p && REVIEW[p.reviewDecision];
     const reviewColor = p?.reviewDecision === "APPROVED" ? t.done : p?.reviewDecision === "CHANGES_REQUESTED" ? t.blocked : t.muted;
@@ -748,6 +784,7 @@ export default class PrPreview extends View {
       .child(div().text_size(12.5).font_semibold().text_color(soft ? t.foreground : t.accent).when(lcars, (el) => el.font_family(st.head).text_size(17))
         .child(key ?? ""))
       .when(Boolean(state), (el) => el.child(this.pill(state[0], state[1])))
+      .children([this.draftToggle(t, p)].filter(Boolean))
       .when(Boolean(review), (el) => el.child(this.pill(review, reviewColor)))
       .when(p?.mergeStateStatus === "BEHIND", (el) => el.child(div().text_size(11.5).text_color(t.dim).child(label(st, "Behind base"))))
       .when(!lcars, (el) => el.child(div().flex_1()))

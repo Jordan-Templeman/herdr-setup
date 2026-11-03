@@ -186,7 +186,7 @@ export function conversation(t, s, ctx) {
             .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(c.body.split("\n")[0])))
           // Its thread when we have it (Resolve, Reply, every comment), else the comment alone.
           .when(shown, (el) => el.child(th
-            ? card(t, s, { ...th, anchored: false }, open, null, "cvt", rep)
+            ? card(t, s, { ...th, anchored: false, flat: true }, open, null, "cvt", rep)
             : v_flex().ml(20).child(commentBody(t, s, c, open, "cvx", rep))));
       });
       rows.push(box(t, s, `cv-${k}`, color).when(hit(it.c), (el) => el.border(2).border_color(t.accent))

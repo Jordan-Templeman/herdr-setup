@@ -563,11 +563,13 @@ function replyBox(t, s, i, rep, prefix) {
 }
 
 // One thread or pending-on-GitHub card. open: a Set of toggled keys the mod keeps; w: its width; rep: the
-// view's Replies, for a Reply box, Resolve and each comment's actions.
+// view's Replies, for a Reply box, Resolve and each comment's actions. i.flat: it sits under a row that
+// already expanded it, so no header of its own: the code, every comment with its author, one action row.
 export function card(t, s, i, open, w, prefix, rep) {
   const ghPending = i.kind === "github-pending";
   const dim = i.resolved || i.outdated;
-  const expanded = isOpen(open, i.id, dim);
+  const flat = Boolean(i.flat);
+  const expanded = flat || isOpen(open, i.id, dim);
   const [first, ...replies] = i.comments;
   const color = ghPending ? t.ansi5 : t.accent;
   const head = h_flex().id(`${prefix}-h-${i.id}`).gap(7).items_center().min_w(0).cursor_pointer()
@@ -581,10 +583,11 @@ export function card(t, s, i, open, w, prefix, rep) {
     .when(!expanded, (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child((first?.body ?? "").split("\n")[0])))
     .when(replies.length > 0 && !expanded, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(`+${replies.length}`)));
   const repliesKey = `r:${i.id}`;
-  // Shown by default when one is pending, so a reply you just added is in view.
-  const showReplies = open.has(repliesKey) !== replies.some((c) => c.pending);
+  // Shown by default when one is pending, so a reply you just added is in view; flat, also when there are few.
+  const fold = !flat || replies.length > 3;
+  const showReplies = open.has(repliesKey) !== (!fold || replies.some((c) => c.pending));
   const placed = (c) => ({ ...c, path: i.path, side: i.side, line: i.line, originalLine: i.originalLine, thread: i });
-  const reply = (c) => v_flex().gap(4).pl(10).border_l(2).border_color(c.pending ? t.ansi5 : t.border)
+  const reply = (c, top) => v_flex().gap(4).when(!top, (el) => el.pl(10).border_l(2).border_color(c.pending ? t.ansi5 : t.border))
     .child(h_flex().gap(7).items_center()
       .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child(c.author))
       .child(div().text_size(10.5).text_color(t.dim).child(ago(c.createdAt)))
@@ -595,15 +598,15 @@ export function card(t, s, i, open, w, prefix, rep) {
   const sel = rep && !rep.edits.has(rep.selected) && (first?.id === rep.selected || (showReplies && replies.some((c) => c.id === rep.selected)));
   return v_flex().id(`${prefix}-${i.id}`).when(w == null, (el) => el.mx(0)).when(w != null, (el) => el.w(w).mx(10)).my(5).p(9).gap(7).rounded(rad(s, 8)).border(1).border_l(3)
     .border_color(ghPending ? t.ansi5 : dim ? t.border : color).bg(t.popover)
-    .when(dim, (el) => el.opacity(0.62))
-    .child(head)
+    .when(dim && !flat, (el) => el.opacity(0.62))
+    .when(!flat, (el) => el.child(head))
     .when(expanded && Boolean(first), (el) => el
       .when(!i.anchored && !i.file, (el) => el.children([anchorView(t, s, i, first, prefix)].filter(Boolean)))
-      .child(commentBody(t, s, placed(first), open, prefix, rep))
+      .child(flat ? reply(first, true) : commentBody(t, s, placed(first), open, prefix, rep))
       .when(replies.length > 0, (el) => el
-        .child(div().id(`${prefix}-rt-${i.id}`).text_size(11).text_color(t.accent).cursor_pointer().on_click(flip(open, repliesKey))
-          .child(label(s, showReplies ? "Hide replies" : `${replies.length} repl${replies.length === 1 ? "y" : "ies"}`)))
-        .when(showReplies, (el) => el.children(replies.map(reply))))
+        .when(fold, (el) => el.child(div().id(`${prefix}-rt-${i.id}`).text_size(11).text_color(t.accent).cursor_pointer().on_click(flip(open, repliesKey))
+          .child(label(s, showReplies ? "Hide replies" : `${replies.length} repl${replies.length === 1 ? "y" : "ies"}`))))
+        .when(showReplies, (el) => el.children(replies.map((c) => reply(c)))))
       .when(!sel, (el) => el.child(h_flex().gap(14).items_center()
         .when(Boolean(rep) && !rep?.boxes.has(i.id), (el) => el.child(replyBox(t, s, i, rep, prefix)))
         .when(Boolean(rep) && resolvable(i), (el) => el.child(link(t, s, `${prefix}-res-${i.id}`, resolving ? `${rep.busy.what}…` : i.resolved ? "Unresolve" : "Resolve",

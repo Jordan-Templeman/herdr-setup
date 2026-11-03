@@ -11,6 +11,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings, openOverlay } from "herdr";
 import { toCli, closeWith } from "./mode.js";
+import { anchorFromUrl } from "./anchor.js";
 import { openChanges } from "./changes.js";
 import { parse, transcriptPath, dashed, imagesScript, screenPrompt } from "./transcript.js";
 import { parseCodex, isCodex } from "./codex.js";
@@ -56,14 +57,14 @@ const dedent = (s) => {
 };
 
 // Jira tickets and GitHub pull requests open in the inbox's previews; other links in the browser.
-// A chat pane opens them beside itself; a chat window (⌘⇧K), which has no pane, as dialogs.
+// A chat pane opens them beside itself; a chat window (⌘⇧K), which has no pane, as dialogs. A PR
+// link to a comment, review or /files opens the preview at that spot; other deep links (a Jira
+// comment) open where they point.
 function openLink(url, cx) {
-  // Only a bare PR or ticket goes to a preview; anything deeper (a comment anchor, /files, a
-  // focused comment) opens where it points.
   const ticket = /atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)\/?$/.exec(url);
-  const pr = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/.exec(url);
+  const pr = anchorFromUrl(url);
   const target = ticket ? { mod: "jira-preview", props: { key: ticket[1] }, width: 820 }
-    : pr ? { mod: "pr-preview", props: { url: `https://github.com/${pr[1]}/${pr[2]}/pull/${pr[3]}`, key: `${pr[2]}#${pr[3]}` }, width: 0.85 }
+    : pr ? { mod: "pr-preview", props: { url: pr.url, key: pr.url.replace(/^.*github\.com\/[^/]+\/([^/]+)\/pull\/(\d+)$/, "$1#$2"), anchor: pr.anchor }, width: 0.85 }
     : null;
   if (!target) return cx.open_url(url);
   if (props()?.overlay) return openOverlay({ mod: target.mod, props: target.props, kind: "dialog", width: target.width, height: 0.9 });

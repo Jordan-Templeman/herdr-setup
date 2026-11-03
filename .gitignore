@@ -12,6 +12,8 @@
 !/layouts/
 /layouts/*
 !/layouts/field.json
+!/layouts/deck.json
+!/layouts/lcars.json
 !/mods/
 /mods/*
 !/mods/inbox/
@@ -28,3 +30,7 @@ mods/*/jsconfig.json
 mods/*/.review.json
 mods/chat/.cache/
 !/upstream/
+!/themes/
+/themes/*
+!/themes/deck.json
+!/themes/lcars.json

@@ -8,7 +8,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, props, run, theme, home, terminals } from "herdr";
+import { panes, props, run, theme, home, terminals, focused, nextCommand, shared, setShared } from "herdr";
 import { modes, chatFor, toChat, toCli } from "./mode.js";
 
 function icon(p, size, color) {
@@ -22,8 +22,34 @@ function folder(cwd) {
   return cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
 }
 
+// Focus mode (keys.json "pane-plus.zen"): hides the sidebar, pond, inbox and status bar, or
+// brings back the ones it hid. Every header gets the key; the focused pane's acts.
+const FOCUS_BLOCKS = ["sidebar", "field", "inbox", "status"];
+
+function toggleFocus() {
+  const hidden = shared("pane-plus.focus");
+  if (hidden) {
+    hidden.forEach((id) => run("layout.show", { id }));
+    setShared("pane-plus.focus", null);
+  } else {
+    FOCUS_BLOCKS.forEach((id) => run("layout.hide", { id }));
+    setShared("pane-plus.focus", FOCUS_BLOCKS);
+  }
+}
+
 export default class Pane extends View {
-  init() { this.hovered = false; }
+  init(_props, cx) {
+    this.hovered = false;
+    cx.spawn(async () => {
+      for (;;) {
+        const command = await nextCommand();
+        const me = props()?.pane;
+        const tab = focused()?.tab;
+        const lead = panes().find((q) => q.focused && q.tab === tab)?.pane ?? panes().find((q) => q.tab === tab)?.pane;
+        if (command === "zen" && me === lead) toggleFocus();
+      }
+    });
+  }
 
   me() {
     return panes().find((p) => p.pane === props()?.pane);

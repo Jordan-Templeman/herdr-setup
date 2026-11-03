@@ -20,13 +20,14 @@ fi
 git config core.hooksPath bin/hooks
 bin/sync-shared >/dev/null
 
-# ⌘⇧K opens the chat view for the focused agent.
+# ⌘⇧K: chat for the focused agent. ⌥⌘P / ⌥⌘I: show or hide the pond / inbox. ⌥⌘F: focus mode.
 python3 - "$here/keys.json" <<'PY'
 import json, os, sys
 path = sys.argv[1]
 keys = json.load(open(path)) if os.path.exists(path) else {}
-if keys.get("global", {}).get("cmd-shift-k") != "mod.open:chat":
-    keys.setdefault("global", {})["cmd-shift-k"] = "mod.open:chat"
+wanted = {"cmd-shift-k": "mod.open:chat", "cmd-alt-p": "layout.toggle:field", "cmd-alt-i": "layout.toggle:inbox", "cmd-alt-f": "pane-plus.zen"}
+if any(keys.get("global", {}).get(k) != v for k, v in wanted.items()):
+    keys.setdefault("global", {}).update(wanted)
     json.dump(keys, open(path, "w"), indent=2)
 PY
 

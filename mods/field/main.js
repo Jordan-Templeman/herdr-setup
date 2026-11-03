@@ -625,7 +625,20 @@ export default class Field extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(sharp ? t.accent : s.labelInk)
           .when(st.name === "lcars", (el) => el.font_family(st.head).text_size(16))
           .child(caps(st, nickname(a))))
-        .child(div().text_size(10.5).text_color(c).child(caps(st, WORD[a.status] ?? a.status))))
+        .child(div().text_size(10.5).text_color(c).child(caps(st, WORD[a.status] ?? a.status)))
+        .child(h_flex().id("changes").px(8).py(3).rounded(rad(st, 6)).border(1).border_color(s.dim)
+          .cursor_pointer().hover((b) => b.bg(`${t.accent}22`))
+          .on_click((_e, cx) => { cx.stop_propagation(); this.overCard = false; this.hovered = null; openChanges(a.address); })
+          .child(div().text_size(10.5).font_semibold().text_color(s.labelInk).child(caps(st, "Changes"))))
+        .when(done, (el) => el.child(h_flex().id("dismiss").px(8).py(3).rounded(rad(st, 6)).border(1).border_color(`${t.blocked}88`)
+          .cursor_pointer().hover((b) => b.bg(`${t.blocked}22`))
+          .on_click((_e, cx) => {
+            cx.stop_propagation();
+            this.overCard = false;
+            this.hovered = null;
+            this.dismiss(a);
+          })
+          .child(div().text_size(10.5).font_semibold().text_color(t.blocked).child(caps(st, "Dismiss"))))))
       .child(div().text_size(11).text_color(s.labelInk).child(a.title || "No task yet"))
       .child(row("Doing", act ? `${doing(act)}${act.tool && act.tool !== "think" ? ` · ${act.tool}` : ""}` : WORD[a.status] ?? a.status))
       .child(row("For", this.since(a) || "—"))
@@ -639,21 +652,7 @@ export default class Field extends View {
           .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(s.labelInk).child(b.task ?? kind(b.type)))
           .child(div().flex_none().text_size(10).text_color(s.muted)
             .child([kind(b.type) + (b.codex && !isCodex(b.type) ? " (Codex)" : ""), doing(b.act)].filter(Boolean).join(" · "))))))
-      .child(h_flex().pt(2).items_center().gap(8)
-        .child(div().flex_1().text_size(9.5).text_color(s.dim).child(caps(st, "Click to focus · right-click to chat")))
-        .child(h_flex().id("changes").px(8).py(3).rounded(rad(st, 6)).border(1).border_color(s.dim)
-          .cursor_pointer().hover((b) => b.bg(`${t.accent}22`))
-          .on_click((_e, cx) => { cx.stop_propagation(); this.overCard = false; this.hovered = null; openChanges(a.address); })
-          .child(div().text_size(10.5).font_semibold().text_color(s.labelInk).child(caps(st, "Changes"))))
-        .when(done, (el) => el.child(h_flex().id("dismiss").px(8).py(3).rounded(rad(st, 6)).border(1).border_color(`${t.blocked}88`)
-          .cursor_pointer().hover((b) => b.bg(`${t.blocked}22`))
-          .on_click((_e, cx) => {
-            cx.stop_propagation();
-            this.overCard = false;
-            this.hovered = null;
-            this.dismiss(a);
-          })
-          .child(div().text_size(10.5).font_semibold().text_color(t.blocked).child(caps(st, "Dismiss"))))));
+      .child(div().pt(2).text_size(9.5).text_color(s.dim).child(caps(st, "Click to focus · right-click to chat")));
   }
 
   bubbles(s, h, n) {

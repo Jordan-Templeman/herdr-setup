@@ -6,6 +6,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { style, label } from "./style.js";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -281,7 +282,8 @@ export default class Spaces extends View {
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
-    const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
+    const look = style(), inset = (el) => el.when(look.name === "lcars", el => el.ml(15).font_family("DIN Condensed").text_size(14));
+    const loadingRow = m => inset(div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8)).text_size(12).text_color(t.dim).child(collapsed ? "…" : label(look, "Loading…"));
     if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.map(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
@@ -291,7 +293,8 @@ export default class Spaces extends View {
       const connected = !m || machine?.state === "connected";
       const rebuilt = this.rebuilt(machine) || !!repair;
       const folded = this.folded.has(m);
-      const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 2 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
+      const head = inset(h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 2 : 8).gap(7).items_center().text_size(11).text_color(look.name === "lcars" ? t.ansi11 : t.dim))
+        .when(look.name === "deck", el => el.h(22).text_size(10.5))
         .cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => {
           folded ? this.folded.delete(m) : this.folded.add(m);
@@ -299,7 +302,7 @@ export default class Spaces extends View {
           cx.notify();
         })
         .child(svg(`mods/workspace-chrome-plus/${m ? "server" : "monitor"}.svg`).size(13).flex_none())
-        .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
+        .when(!collapsed, el => el.child(div().flex_1().truncate().child(label(look, m ?? "This computer")))
           .when(!connected && !rebuilt, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
           .when(rebuilt, el => el.child(h_flex().flex_none().gap(3).items_center()
             .child(div().max_w(140).truncate().child(repair?.error || "rebuilt ·"))
@@ -312,10 +315,10 @@ export default class Spaces extends View {
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); }).child("+")))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
           .child(svg(`mods/workspace-chrome-plus/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
-      const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(8).gap(7).items_center().rounded(7)
-        .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
+      const empty = inset(h_flex().id(`machine-new-${m ?? "local"}`).h(28).flex_none().px(8).gap(7).items_center().rounded(7)
+        .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)))
         .on_click(() => run("space.new", { machine: m ?? "" }))
-        .child(svg("mods/workspace-chrome-plus/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
+        .child(svg("mods/workspace-chrome-plus/plus.svg").size(12)).when(!collapsed, el => el.child(label(look, "New space there")));
       if (!collapsed && rebuilt) return [head];
       return [head, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : empty])];
     });
@@ -343,24 +346,13 @@ export default class Spaces extends View {
       .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
   }
 
-  row({ w, i, g, tree }, t) {
-    const on = w.active;
-    const colors = shared("space.colors") ?? {};
-    const color = colors[w.id] ?? "ansi6";
-    const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
-    return v_flex()
-      .relative()
-      .id(`space-${w.id}`)
-      .px(8)
-      .h(rowHeight({ tree }))
-      .flex_none()
-      .justify_center()
-      .rounded(8)
-      .when(on, (el) => el.bg(t.selected))
-      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+  // Press, drag to reorder, click, right-click: the same in every look.
+  // `line`: the drop marker's color.
+  handlers(el, w, i, line) {
+    return el
       .when(this.pressed === i && this.over !== i, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === i && this.pressed !== i, (el) => el.child(
-        div().absolute().left(0).right(0).h(2).bg(t.accent)
+        div().absolute().left(0).right(0).h(2).bg(line)
           .when(this.pressed < i, line => line.bottom(0))
           .when(this.pressed > i, line => line.top(0)),
       ))
@@ -385,7 +377,31 @@ export default class Spaces extends View {
         else if (from === i) run("space.select", { id: w.id });
         cx.notify();
       })
-      .on_mouse_down("right", () => this.menu(w))
+      .on_mouse_down("right", () => this.menu(w));
+  }
+
+  fill(w, t) {
+    const color = (shared("space.colors") ?? {})[w.id] ?? "ansi6";
+    return color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+  }
+
+  row(r, t) {
+    const s = style();
+    if (s.name === "deck") return this.deckRow(r, t);
+    if (s.name === "lcars") return this.lcarsRow(r, t);
+    const { w, i, g, tree } = r;
+    const on = w.active;
+    const fill = this.fill(w, t);
+    return this.handlers(v_flex()
+      .relative()
+      .id(`space-${w.id}`)
+      .px(8)
+      .h(rowHeight({ tree }))
+      .flex_none()
+      .justify_center()
+      .rounded(8)
+      .when(on, (el) => el.bg(t.selected))
+      .when(!on, (el) => el.hover((s) => s.bg(t.hover))), w, i, t.accent)
       .child(
         h_flex()
           .gap(9)
@@ -397,7 +413,79 @@ export default class Spaces extends View {
       );
   }
 
+  // Deck: dense, square, an amber rule on the selected row.
+  deckRow({ w, i, g, tree }, t) {
+    const on = w.active;
+    return this.handlers(h_flex()
+      .relative()
+      .id(`space-${w.id}`)
+      .h(tree ? 24 : 26)
+      .flex_none()
+      .pl(10)
+      .pr(6)
+      .gap(8)
+      .items_center()
+      .text_size(12.5)
+      .border_l(2)
+      .border_color(on ? t.accent : t.chrome)
+      .when(on, (el) => el.bg(t.selected))
+      .when(!on, (el) => el.hover((s) => s.bg(t.hover))), w, i, t.accent)
+      .when(Boolean(tree), el => el.pl(26).child(div().text_color(t.dim).child(tree)))
+      .when(!tree, el => el.child(h_flex().size(15).flex_none().rounded(2).bg(this.fill(w, t)).items_center().justify_center().text_size(9.5).font_bold().text_color("#0c0f13").child([...w.name][0]?.toUpperCase() ?? "?")))
+      .child(div().flex_shrink(0).max_w(150).truncate().text_color(on ? t.foreground : t.muted).when(on, el => el.font_semibold()).child(w.name))
+      .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
+      .when(w.status === "blocked" || w.status === "done", el => el.child(div().size(6).flex_none().bg(tone(t, w.status))));
+  }
+
+  // LCARS: a numbered colour block on the rail; the shown space is orange.
+  lcarsRow({ w, i, g, tree }, t) {
+    const on = w.active;
+    const colors = [t.ansi5, t.ansi11, t.ansi4, t.ansi12, t.ansi13, t.ansi6];
+    const color = on ? t.accent : colors[i % colors.length];
+    const n = String(i + 1).padStart(2, "0");
+    const raw = g?.branch ?? "";
+    const branch = !g || tree || raw === "main" || raw === "master" || raw.toLowerCase() === w.name.toLowerCase() ? "" : raw;
+    return h_flex()
+      .id(`space-${w.id}`)
+      .h(tree ? 26 : 32)
+      .flex_none()
+      .gap(3)
+      .child(div().w(12).h_full().flex_none().bg(on ? t.accent : t.ansi5))
+      .when(Boolean(tree), el => el.child(div().w(10).h_full().flex_none().bg(t.ansi4)))
+      .child(this.handlers(h_flex()
+        .relative()
+        .flex_1()
+        .min_w(0)
+        .h_full()
+        .px(8)
+        .pb(1)
+        .gap(6)
+        .items_end()
+        .bg(color)
+        .when(on, el => el.rounded_r(16))
+        .hover((s) => s.opacity(0.82))
+        .font_family("DIN Condensed")
+        .text_color("#000000"), w, i, t.foreground)
+        .child(div().text_size(12).flex_none().child(n))
+        .when(Boolean(branch), el => el.child(div().text_size(11).min_w(0).truncate().opacity(0.7).child(branch.toUpperCase())))
+        .when(g?.ahead > 0, el => el.child(div().text_size(11).flex_none().child(`+${g.ahead}`)))
+        .when(g?.behind > 0, el => el.child(div().text_size(11).flex_none().child(`-${g.behind}`)))
+        .child(div().flex_1())
+        .when(w.status === "blocked" || w.status === "done", el => el.child(div().size(8).mb(6).rounded(4).flex_none().bg("#000000")))
+        .child(div().text_size(tree ? 15 : 17).flex_shrink(0).max_w(150).truncate().child(w.name.toUpperCase())))
+      ;
+  }
+
   compact({ w, i }, t) {
+    const s = style();
+    if (s.name === "lcars") {
+      return h_flex().id(`space-${w.id}`).h(24).flex_none().gap(3)
+        .child(div().w(12).h_full().flex_none().bg(t.ansi5))
+        .child(h_flex().flex_1().h_full().px(4).items_end().justify_end().font_family("DIN Condensed").text_size(14).text_color("#000000")
+          .bg(w.active ? t.accent : t.ansi11).hover((s) => s.opacity(0.82))
+          .on_click(() => run("space.select", { id: w.id }))
+          .child(String(i + 1).padStart(2, "0")));
+    }
     return h_flex()
       .id(`space-${w.id}`)
       .h(26)
@@ -405,10 +493,34 @@ export default class Spaces extends View {
       .justify_center()
       .gap(4)
       .when(w.active, (el) => el.bg(t.raised))
+      .when(s.name === "deck", el => el.border_l(2).border_color(w.active ? t.accent : t.chrome))
       .hover((s) => s.bg(t.hover))
       .on_click(() => run("space.select", { id: w.id }))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
       .child(div().text_color(tone(t, w.status)).child(glyph(w.status)));
+  }
+
+  // The list's title bar in each look.
+  header(t, collapsed, s) {
+    const add = div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
+      .on_click(() => run("space.new")).child(svg("mods/workspace-chrome-plus/plus.svg").size(14));
+    if (s.name === "deck") {
+      return h_flex().h(30).pl(12).pr(6).gap(6).items_center().text_size(10.5).text_color(t.dim)
+        .when(!collapsed, el => el.child(div().font_bold().text_color(t.accent).child("SPACES")).child(`// 01.SPC`).child(div().flex_1()).child(String(spaces().length).padStart(2, "0")))
+        .child(add.size(22).rounded(0).hover(s => s.bg(t.hover).text_color(t.accent)));
+    }
+    if (s.name === "lcars") {
+      return h_flex().h(28).flex_none().gap(3).mb(3)
+        .child(div().w(12).h_full().flex_none().bg(t.ansi5))
+        .child(h_flex().id("space-new").flex_1().h_full().px(8).gap(6).items_end().justify_end().bg(t.ansi3).rounded_r(14)
+          .font_family("DIN Condensed").text_color("#000000").hover(s => s.opacity(0.82))
+          .on_click(() => run("space.new"))
+          .when(!collapsed, el => el.child(div().text_size(12).pb(1).child("+ NEW")).child(div().flex_1()).child(div().text_size(17).child(`SPACES ${String(spaces().length).padStart(2, "0")}`)))
+          .when(collapsed, el => el.child(div().text_size(17).child("+"))));
+    }
+    return h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
+      .when(!collapsed, el => el.child("Spaces"))
+      .child(add);
   }
 
   render() {
@@ -426,12 +538,12 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
+    const look = style();
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
-      .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
-        .when(!collapsed, el => el.child("Spaces"))
-        .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
-          .on_click(() => run("space.new")).child(svg("mods/workspace-chrome-plus/plus.svg").size(14))))
-      .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
+      .when(look.name === "lcars", el => el.pt(3).relative().child(div().absolute().left(0).top(3).bottom(0).w(12).bg(t.ansi5)))
+      .child(this.header(t, collapsed, look))
+      .child(v_flex().flex_1().min_h(0).px(look.name === "soft" ? 8 : 0).pb(14).overflow_y_scrollbar().mode("always")
+        .when(look.name === "lcars", el => el.gap(3))
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
         .children(this.grouped(t, collapsed)));
   }

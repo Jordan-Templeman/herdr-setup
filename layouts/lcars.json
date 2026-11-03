@@ -10,10 +10,10 @@
           "id": "brand",
           "type": "block",
           "content": {
-            "mod": "workspace-chrome"
+            "mod": "workspace-chrome-plus"
           },
           "size": {
-            "px": 46
+            "px": 52
           },
           "window_drag": true
         },
@@ -25,7 +25,7 @@
               "id": "spaces",
               "type": "block",
               "content": {
-                "mod": "spaces"
+                "mod": "spaces-plus"
               },
               "size": {
                 "weight": 1
@@ -36,7 +36,7 @@
               "id": "agents",
               "type": "block",
               "content": {
-                "mod": "agents"
+                "mod": "agents-plus"
               },
               "size": {
                 "weight": 1
@@ -49,13 +49,13 @@
           "id": "sidebar-footer",
           "type": "block",
           "content": {
-            "mod": "workspace-chrome",
+            "mod": "workspace-chrome-plus",
             "props": {
               "footer": true
             }
           },
           "size": {
-            "px": 69
+            "px": 92
           }
         }
       ],
@@ -65,7 +65,11 @@
       "min": 44,
       "max": 480,
       "background": "chrome",
-      "resizable": false
+      "resizable": false,
+      "divider": {
+        "width": 0,
+        "color": "chrome"
+      }
     },
     {
       "id": "work",
@@ -75,10 +79,10 @@
           "id": "tabs",
           "type": "block",
           "content": {
-            "mod": "tabs"
+            "mod": "tabs-plus"
           },
           "size": {
-            "px": 42
+            "px": 40
           },
           "window_drag": true
         },
@@ -97,7 +101,7 @@
             "width": 1,
             "color": "border"
           },
-          "radius": 12
+          "radius": 20
         },
         {
           "id": "work-body",
@@ -119,14 +123,14 @@
                   },
                   "background": "background",
                   "border": {
-                    "width": 1,
-                    "color": "border"
+                    "width": 2,
+                    "color": "input"
                   },
                   "focus": {
-                    "width": 1,
+                    "width": 2,
                     "color": "accent"
                   },
-                  "radius": 10,
+                  "radius": 18,
                   "gap": 8,
                   "lone": true
                 }
@@ -173,10 +177,10 @@
           "id": "status",
           "type": "block",
           "content": {
-            "mod": "workspace-status"
+            "mod": "workspace-status-plus"
           },
           "size": {
-            "px": 28
+            "px": 30
           }
         }
       ],
@@ -203,8 +207,8 @@
     12
   ],
   "divider": {
-    "width": 1,
-    "color": "border"
+    "width": 0,
+    "color": "chrome"
   },
   "titlebar": "none",
   "traffic_lights": [
@@ -216,5 +220,6 @@
   "cloned_from": {
     "name": "field",
     "version": "0.1.12"
-  }
+  },
+  "preview": "layouts/lcars.svg"
 }

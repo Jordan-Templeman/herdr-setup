@@ -10,10 +10,10 @@
           "id": "brand",
           "type": "block",
           "content": {
-            "mod": "workspace-chrome"
+            "mod": "workspace-chrome-plus"
           },
           "size": {
-            "px": 46
+            "px": 42
           },
           "window_drag": true
         },
@@ -25,7 +25,7 @@
               "id": "spaces",
               "type": "block",
               "content": {
-                "mod": "spaces"
+                "mod": "spaces-plus"
               },
               "size": {
                 "weight": 1
@@ -36,7 +36,7 @@
               "id": "agents",
               "type": "block",
               "content": {
-                "mod": "agents"
+                "mod": "agents-plus"
               },
               "size": {
                 "weight": 1
@@ -49,13 +49,13 @@
           "id": "sidebar-footer",
           "type": "block",
           "content": {
-            "mod": "workspace-chrome",
+            "mod": "workspace-chrome-plus",
             "props": {
               "footer": true
             }
           },
           "size": {
-            "px": 69
+            "px": 58
           }
         }
       ],
@@ -75,10 +75,10 @@
           "id": "tabs",
           "type": "block",
           "content": {
-            "mod": "tabs"
+            "mod": "tabs-plus"
           },
           "size": {
-            "px": 42
+            "px": 36
           },
           "window_drag": true
         },
@@ -97,7 +97,7 @@
             "width": 1,
             "color": "border"
           },
-          "radius": 12
+          "radius": 2
         },
         {
           "id": "work-body",
@@ -126,8 +126,8 @@
                     "width": 1,
                     "color": "accent"
                   },
-                  "radius": 10,
-                  "gap": 8,
+                  "radius": 2,
+                  "gap": 6,
                   "lone": true
                 }
               }
@@ -166,21 +166,21 @@
               "hidden": true
             }
           ],
-          "padding": 8,
-          "gap": 8
+          "padding": 6,
+          "gap": 6
         },
         {
           "id": "status",
           "type": "block",
           "content": {
-            "mod": "workspace-status"
+            "mod": "workspace-status-plus"
           },
           "size": {
-            "px": 28
+            "px": 24
           }
         }
       ],
-      "gap": 8,
+      "gap": 6,
       "resizable": false
     },
     {
@@ -216,5 +216,6 @@
   "cloned_from": {
     "name": "field",
     "version": "0.1.12"
-  }
+  },
+  "preview": "layouts/deck.svg"
 }

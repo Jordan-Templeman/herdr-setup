@@ -21,17 +21,15 @@ git config core.hooksPath bin/hooks
 bin/sync-shared >/dev/null
 
 # ⌘⇧K: chat for the focused agent. ⌥⌘P / ⌥⌘I: show or hide the pond / inbox. ⌥⌘F: focus mode.
-# ⌘⇧O: search (⌘1..⌘6 jump between its groups while it's open).
+# ⌘⇧O: search.
 python3 - "$here/keys.json" <<'PY'
 import json, os, sys
 path = sys.argv[1]
 keys = json.load(open(path)) if os.path.exists(path) else {}
 wanted = {"cmd-shift-k": "mod.open:chat", "cmd-alt-p": "layout.toggle:field", "cmd-alt-i": "layout.toggle:inbox", "cmd-alt-f": "pane-plus.zen",
           "cmd-shift-o": "mod.open:search"}
-search = {f"cmd-{n}": f"search.group{n}" for n in range(1, 7)}
-if any(keys.get("global", {}).get(k) != v for k, v in wanted.items()) or keys.get("mod:search") != search:
+if any(keys.get("global", {}).get(k) != v for k, v in wanted.items()):
     keys.setdefault("global", {}).update(wanted)
-    keys["mod:search"] = search
     json.dump(keys, open(path, "w"), indent=2)
 PY
 

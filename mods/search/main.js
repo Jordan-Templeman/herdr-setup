@@ -1,6 +1,6 @@
 // Global search (keys.json "mod.open:search", ⌘⇧O): agents, tabs and spaces, PRs, Jira tickets, files and
 // commands in one list. Type to filter (fuzzy), ↑/↓ and Enter to open, ⌘Enter opens a file in the editor,
-// Tab or ⌘1..⌘6 jumps between groups, Esc closes. Recent picks float up; an empty query shows them and the agents.
+// Tab jumps between groups; a leading >, @, #, ! or / searches one group only. Esc closes. Recent picks float up; an empty query shows them and the agents.
 // PRs and tickets come from the inbox (shared "inbox.items") plus a live GitHub search.
 // As a pane (props.file) it's a read-only viewer for the file picked here.
 
@@ -19,6 +19,9 @@ const GROUPS = [
   { id: "files", title: "Files", max: 40 },
   { id: "commands", title: "Commands", max: 8 },
 ];
+// A leading character narrows the search to one group: "> " commands, "@" agents, "#" PRs, "!" tickets, "/" files.
+const PREFIX = { ">": "commands", "@": "agents", "#": "prs", "!": "jira", "/": "files" };
+
 const ICON = { tabs: "layers", prs: "git-compare", jira: "square-pen", files: "file-text", commands: "terminal" };
 const RECENT_MAX = 20;
 const H = { head: 30, row: 34 };
@@ -126,7 +129,9 @@ export default class Search extends View {
   }
 
   changed(cx) {
-    this.q = this.input.value();
+    const raw = this.input.value();
+    this.only = PREFIX[raw.trimStart()[0]] ?? null;
+    this.q = this.only ? raw.trimStart().slice(1) : raw;
     this.at = 0;
     this.auto = true;
     this.scroll = 0;
@@ -298,7 +303,7 @@ export default class Search extends View {
   rows() {
     const g = this.groups();
     const out = [];
-    if (!this.q.trim()) {
+    if (!this.q.trim() && !this.only) {
       const live = new Map(Object.values(g).flat().map((r) => [r.id, r]));
       const recent = this.recent.map((r) => live.get(r.id) ?? (r.act?.run && /^(agent|space|tab):/.test(r.id) ? null : { ...r, hits: [], subHits: [] })).filter(Boolean).slice(0, 8);
       if (recent.length) {
@@ -308,7 +313,8 @@ export default class Search extends View {
     }
     const empty = !this.q.trim();
     GROUPS.forEach((grp, n) => {
-      const items = empty && grp.id !== "agents" ? [] : g[grp.id] ?? [];
+      if (this.only && grp.id !== this.only) return;
+      const items = this.only ? (g[grp.id] ?? []).slice(0, empty ? 30 : undefined) : empty && grp.id !== "agents" ? [] : g[grp.id] ?? [];
       if (!items.length) return;
       out.push({ head: { ...grp, n: n + 1 } });
       items.forEach((r) => out.push({ item: r }));
@@ -490,7 +496,7 @@ export default class Search extends View {
           ? rows.map((r, i) => (visible(i) ? place(row(r), i) : null)).filter(Boolean)
           : [div().p(12).text_color(t.dim).child(this.q.trim() ? (busy ? "Searching…" : "Nothing matches") : "Type to search")]))
       .child(h_flex().flex_none().gap(14).text_size(11).text_color(t.dim)
-        .child(hint("↑↓", "move")).child(hint("↵", "open")).child(hint("⌘↵", "in editor")).child(hint("⇥ ⌘1-6", "groups"))
+        .child(hint("↑↓", "move")).child(hint("↵", "open")).child(hint("⌘↵", "in editor")).child(hint("⇥", "next group")).child(hint("> @ # ! /", "one group"))
         .child(div().flex_1()).child(div().truncate().child(this.folder ? this.folder.replace(home(), "~") : "")));
   }
 

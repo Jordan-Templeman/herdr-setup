@@ -153,6 +153,13 @@
                       "content": {
                         "mod": "changes"
                       }
+                    },
+                    {
+                      "id": "pr",
+                      "type": "block",
+                      "content": {
+                        "mod": "pr-files"
+                      }
                     }
                   ],
                   "active": "files"

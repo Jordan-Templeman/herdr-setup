@@ -1,5 +1,5 @@
-// Agent sessions started from the inbox: one Claude terminal per item, tagged inbox.item=<key>,
-// so the item can link back to it.
+// Agent sessions started from the inbox: one Claude terminal per item, tagged inbox.item=<key>
+// (and inbox.url=<url>), so the item can link back to it.
 
 import { hc, exec, run, spaces, panes, terminals, agents, notify, home } from "herdr";
 import { setup } from "./setup.js";
@@ -26,11 +26,12 @@ export const openSession = (address) => run("agent.focus", { terminal: address }
 
 // Starts Claude on `prompt` in the space for setup.json's repo (else the shown one), in a tab named
 // after the item, and shows it.
-export async function startSession(key, prompt) {
+export async function startSession(key, prompt, url) {
   const { repo } = await setup();
   const space = spaces().find((s) => repo && s.folder === repo) ?? spaces().find((s) => s.active);
   const name = key.toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 32);
   const args = ["run", "--bg", "--json", "--keep", "--name", name, "--cwd", space?.folder || repo || home(), "--label", `inbox.item=${key}`];
+  if (url) args.push("--label", `inbox.url=${url}`);
   if (space) args.push("--label", `herdr.space=${space.id}`);
   // Through a login shell, like Herdr's own tabs, so mise's node and the rest of PATH are there for hooks.
   const r = await hc([...args, "--", "/bin/zsh", "-lic", 'claude "$1"', "claude", prompt]);

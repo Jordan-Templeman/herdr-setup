@@ -220,7 +220,7 @@ export default class JiraPreview extends View {
 
   // Footer action: back to the item's session, else its start action (from the inbox), else none.
   sessionButton(button) {
-    const { key, action } = props() ?? {};
+    const { key, url, action } = props() ?? {};
     const session = sessionFor(key);
     if (session) {
       const status = statusOf(session);
@@ -230,7 +230,7 @@ export default class JiraPreview extends View {
     if (action) return button("start", "terminal", action.label, true, (_e, cx) => {
       // Closing ends this dialog's tasks, so close only once the session is up and its tab named.
       cx.spawn(async () => {
-        await startSession(key, action.prompt);
+        await startSession(key, action.prompt, url);
         this.close();
       });
     });

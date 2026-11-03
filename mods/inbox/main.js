@@ -216,7 +216,7 @@ export default class Inbox extends View {
       .on_click((_e, cx) => {
         cx.stop_propagation();
         if (session) openSession(session);
-        else cx.spawn(async () => { await startSession(item.key, item.action.prompt); });
+        else cx.spawn(async () => { await startSession(item.key, item.action.prompt, item.url); });
       })
       .when(Boolean(session), (el) => el.child(div().size(6).rounded(3).bg(dot)
         .when(status === "working" || status === "blocked", (d) => d.loop("opacity", { from: 0.3, to: 1, period: 1100 }))))

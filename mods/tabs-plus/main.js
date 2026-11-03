@@ -88,7 +88,8 @@ export default class Tabs extends View {
       ? Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom - (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
       : 10;
     const panel = find(root, "panel"), body = find(root, "panel-body");
-    const enabled = shared("workspace.panels") ?? ["files", "changes"];
+    // PR (pr-files) is ours, so it is always offered.
+    const enabled = [...(shared("workspace.panels") ?? ["files", "changes"]), "pr"];
     this.syncPanel(space, panel, body, enabled);
     // One control in the bar's look: soft keeps the shipped button, Deck a square chip with an
     // amber edge when on, LCARS a colour pill.
@@ -105,7 +106,7 @@ export default class Tabs extends View {
     };
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
-      return chip(`panel-${id}`, on, label, icon, id === "files" ? t.ansi4 : t.ansi12, () => {
+      return chip(`panel-${id}`, on, label, icon, { files: t.ansi4, changes: t.ansi12, pr: t.ansi3 }[id], () => {
         if (on) run("layout.hide", { id: "panel" });
         else { run("layout.select", { stack: "panel-body", child: id }); run("layout.show", { id: "panel" }); }
       });
@@ -138,6 +139,7 @@ export default class Tabs extends View {
       .child(sep())
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
+      .when(Boolean(find(body, "pr")), el => el.child(panelButton("pr", "PR", "mods/pr-files/pr.svg")))
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs-plus/win-min.svg").size(16) : "−", () => run("window.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs-plus/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs-plus/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))));

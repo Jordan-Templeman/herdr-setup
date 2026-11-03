@@ -23,6 +23,11 @@
 !/mods/chat/
 !/mods/pane-plus/
 !/mods/inspect/
+!/mods/spaces-plus/
+!/mods/agents-plus/
+!/mods/workspace-chrome-plus/
+!/mods/tabs-plus/
+!/mods/workspace-status-plus/
 !/lib/
 # Copied into every mod by Herdr.
 mods/*/gpui-kit.d.ts

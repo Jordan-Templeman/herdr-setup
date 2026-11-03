@@ -4,7 +4,8 @@
 // sleep. Sub-agents paddle behind their parent as babies; when one finishes it grows and swims up
 // out of the pond; each baby wears a badge for what it's doing and says its task on hover. Click a critter to jump to its agent,
 // right-click it to open its chat view beside it; "+ Claude" starts a new one in the shown space.
-// Water and sand follow the app's light or dark appearance.
+// Water and sand follow the app's light or dark appearance; the deck layout draws a sonar tank at night
+// and the lcars one a black viewscreen framed by bars.
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -12,6 +13,7 @@ import { agents, spaces, run, theme, settings, terminals, panes, exec, openOverl
 import { toChat, closeWith, modes } from "./mode.js";
 import { serveInspect } from "./inspect.js";
 import { setup } from "./setup.js";
+import { style, label as caps, rad, badge as letterBadge, heading, brackets, LETTER } from "./style.js";
 
 const ART = "mods/field";
 const CRITTER = 44;
@@ -165,6 +167,19 @@ const SCENES = {
     sand: "#f2dfb2", sandEdge: "#e6cd92", glint: "#ffffff99",
     ink: "#10233a", muted: "#3d5a75", dim: "#5f7a92",
     label: "#ffffffd9", labelInk: "#10233a", card: "#fffffff5", bubble: "#ffffffaa", button: "#10233a", buttonInk: "#ffffff",
+  },
+  deck: {
+    water: ["#0a1015", "#091014", "#080e12", "#070c10", "#060a0d", "#05080a"],
+    sand: "#0a0c0e", sandEdge: "#1e262f", glint: "#3fd2c733",
+    ink: "#c8d0d9", muted: "#8b96a3", dim: "#5c6773",
+    label: "#06080ae6", labelInk: "#c8d0d9", card: "#0a0d11f7", bubble: "#3fd2c766", button: "#ff9e3d", buttonInk: "#0c0f13",
+    grid: "#3fd2c714", sweep: "#3fd2c7",
+  },
+  lcars: {
+    water: ["#000000", "#010103", "#020206", "#030309", "#03040c", "#04050f"],
+    sand: "#000000", sandEdge: "#000000", glint: "#cc99cc44",
+    ink: "#f2e3c6", muted: "#c9a873", dim: "#7a6a50",
+    label: "#000000e6", labelInk: "#f2e3c6", card: "#0b0b0bf7", bubble: "#9999ff66", button: "#ff9900", buttonInk: "#000000",
   },
 };
 
@@ -420,7 +435,7 @@ export default class Field extends View {
     const W = 170;
     return v_flex().absolute().top(top).w(W).items_center()
       .left(Math.min(Math.max(left - W / 2, 4 - x), this.scene.w - x - W - 4))
-      .child(v_flex().px(7).py(3).rounded(7).bg(s.card).border(1).border_color(`${t.working}66`).max_w(W)
+      .child(v_flex().px(7).py(3).rounded(rad(this.st, 7)).bg(s.card).border(1).border_color(`${t.working}66`).max_w(W)
         .child(div().text_size(10).font_semibold().text_color(s.labelInk).child(b.task ?? "No task given"))
         .child(div().text_size(9).text_color(s.muted)
           .child([kind(b.type) + (b.codex && !isCodex(b.type) ? " (Codex)" : ""), doing(b.act)].filter(Boolean).join(" · "))));
@@ -428,7 +443,7 @@ export default class Field extends View {
 
   // A baby's activity as a tiny chip above its head: the parent's props, shrunk.
   badge(t, s, act, h) {
-    const chip = (child) => div().absolute().top(-12).left(BABY / 2 - 7).w(14).h(11).rounded(4).bg(s.label)
+    const chip = (child) => div().absolute().top(-12).left(BABY / 2 - 7).w(14).h(11).rounded(this.st.name === "deck" ? 1 : 4).bg(s.label)
       .flex().items_center().justify_center().child(child);
     const glyph = (frames, ms) => div().text_size(8).font_semibold().text_color(s.labelInk).frames(frames, ms);
     switch (act.kind) {
@@ -482,6 +497,23 @@ export default class Field extends View {
   label(t, s, a, act, width, kids) {
     const c = this.color(t, a.status, s);
     const what = doing(act) ?? WORD[a.status] ?? a.status;
+    const st = this.st;
+    if (st.name === "deck") {
+      // A mono chip: amber name, a letter badge for the state, a status-coloured edge.
+      return v_flex().px(5).py(2).gap(1).rounded(1).bg(s.label).border_l(2).border_color(c).max_w(width).min_w(0)
+        .child(div().max_w(width - 12).truncate().text_size(9.5).font_bold().text_color(s.labelInk)
+          .child(caps(st, nickname(a, (width - 12) * 5.3 / 6.4))))
+        .child(h_flex().gap(4).items_center()
+          .child(letterBadge(st, t, LETTER[a.status] ?? "?", c))
+          .child(div().text_size(9).text_color(s.muted).child(caps(st, [what, this.since(a), kids ? `+${kids} sub` : ""].filter(Boolean).join(" · ")))));
+    }
+    if (st.name === "lcars") {
+      return v_flex().items_center().gap(2).max_w(width).min_w(0)
+        .child(div().max_w(width - 4).truncate().h(16).px(8).rounded(8).bg(a.status === "idle" ? t.ansi5 : c)
+          .font_family(st.head).text_size(13).text_color(t.background).child(caps(st, nickname(a, (width - 16) * 5.3 / 4.6))))
+        .child(div().font_family(st.head).text_size(11).text_color(c === s.dim ? s.muted : c)
+          .child(caps(st, [what, this.since(a), kids ? `+${kids} sub` : ""].filter(Boolean).join(" · "))));
+    }
     return v_flex().items_center().px(6).py(1).rounded(6).bg(s.label).max_w(width).min_w(0)
       .child(div().max_w(width - 12).truncate().text_size(10).font_semibold().text_color(s.labelInk).child(nickname(a, width - 12)))
       .child(h_flex().gap(4).items_center()
@@ -511,20 +543,26 @@ export default class Field extends View {
     const right = x + width + W + 8 < this.scene.w;
     const left = right ? x + width / 2 + CRITTER / 2 + 6 : Math.max(x + width / 2 - CRITTER / 2 - W - 6, 8);
     const top = Math.min(Math.max(y - 30, 8), this.scene.h - H - 8);
+    const st = this.st;
+    const sharp = st.name !== "soft";
     const row = (k, v) => h_flex().gap(8).items_start()
-      .child(div().w(62).flex_none().text_size(10.5).text_color(s.muted).child(k))
+      .child(div().w(62).flex_none().text_size(sharp ? 9.5 : 10.5).text_color(sharp ? s.dim : s.muted).child(caps(st, k)))
       .child(div().flex_1().min_w(0).text_size(10.5).text_color(s.labelInk).child(v));
     const branch = panes().find((p) => p.pane === a.pane)?.branch;
-    return v_flex().id("card").absolute().left(left).w(W).p(10).gap(5).rounded(10).bg(s.card).border(1).border_color(`${c}66`)
+    return v_flex().id("card").absolute().left(left).w(W).p(10).gap(5).rounded(rad(st, 10)).bg(s.card).border(1)
+      .border_color(st.name === "lcars" ? c : `${c}66`)
       .top(top)
+      .when(st.name === "deck", (el) => el.children(brackets(t, c)))
       .on_hover((over, cx) => {
         this.overCard = over;
         if (!over) this.unhover(cx);
       })
       .child(h_flex().gap(6).items_center()
-        .child(div().size(7).rounded(4).bg(c))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(s.labelInk).child(nickname(a)))
-        .child(div().text_size(10.5).text_color(c).child(WORD[a.status] ?? a.status)))
+        .child(sharp ? letterBadge(st, t, LETTER[a.status] ?? "?", c) : div().size(7).rounded(4).bg(c))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(sharp ? t.accent : s.labelInk)
+          .when(st.name === "lcars", (el) => el.font_family(st.head).text_size(16))
+          .child(caps(st, nickname(a))))
+        .child(div().text_size(10.5).text_color(c).child(caps(st, WORD[a.status] ?? a.status))))
       .child(div().text_size(11).text_color(s.labelInk).child(a.title || "No task yet"))
       .child(row("Doing", act ? `${doing(act)}${act.tool && act.tool !== "think" ? ` · ${act.tool}` : ""}` : WORD[a.status] ?? a.status))
       .child(row("For", this.since(a) || "—"))
@@ -532,15 +570,15 @@ export default class Field extends View {
       .child(row("Branch", branch || "—"))
       .child(row("Used", this.usage(a)))
       .when(kids.length > 0, (el) => el
-        .child(div().pt(3).text_size(10.5).text_color(s.muted).child(`Sub-agents · ${kids.length}`))
+        .child(div().pt(3).text_size(10.5).text_color(s.muted).child(caps(st, `Sub-agents · ${kids.length}`)))
         .children(kids.slice(0, MAX_BABIES).map((b) => h_flex().gap(6).items_center()
-          .child(div().size(5).flex_none().rounded(3).bg(b.act ? t.working : s.dim))
+          .child(div().size(5).flex_none().rounded(sharp ? 0 : 3).bg(b.act ? t.working : s.dim))
           .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(s.labelInk).child(b.task ?? kind(b.type)))
           .child(div().flex_none().text_size(10).text_color(s.muted)
             .child([kind(b.type) + (b.codex && !isCodex(b.type) ? " (Codex)" : ""), doing(b.act)].filter(Boolean).join(" · "))))))
       .child(h_flex().pt(2).items_center().gap(8)
-        .child(div().flex_1().text_size(9.5).text_color(s.dim).child("Click to focus · right-click to chat"))
-        .when(done, (el) => el.child(h_flex().id("dismiss").px(8).py(3).rounded(6).border(1).border_color(`${t.blocked}88`)
+        .child(div().flex_1().text_size(9.5).text_color(s.dim).child(caps(st, "Click to focus · right-click to chat")))
+        .when(done, (el) => el.child(h_flex().id("dismiss").px(8).py(3).rounded(rad(st, 6)).border(1).border_color(`${t.blocked}88`)
           .cursor_pointer().hover((b) => b.bg(`${t.blocked}22`))
           .on_click((_e, cx) => {
             cx.stop_propagation();
@@ -548,7 +586,7 @@ export default class Field extends View {
             this.hovered = null;
             this.dismiss(a);
           })
-          .child(div().text_size(10.5).font_semibold().text_color(t.blocked).child("Dismiss")))));
+          .child(div().text_size(10.5).font_semibold().text_color(t.blocked).child(caps(st, "Dismiss"))))));
   }
 
   bubbles(s, h, n) {
@@ -564,7 +602,7 @@ export default class Field extends View {
     switch (act.kind) {
       case "think":
       case "delegate":
-        return div().absolute().top(-20).left(R - 4).px(5).rounded(8).bg(s.label).text_size(11).font_semibold()
+        return div().absolute().top(-20).left(R - 4).px(5).rounded(this.st.name === "deck" ? 1 : 8).bg(s.label).text_size(11).font_semibold()
           .text_color(s.labelInk).frames(act.kind === "think" ? ["·", "··", "···"] : ["↳", "↳ ·", "↳ ··"], 420);
       case "read":
         return image(`${ART}/magnifier.svg`).absolute().top(-2).w(16).h(16)
@@ -656,6 +694,9 @@ export default class Field extends View {
   }
 
   scenery(s, w, h, groundY) {
+    const st = this.st;
+    if (st.name === "deck") return this.sonar(s, w, h, groundY);
+    if (st.name === "lcars") return this.viewscreen(s, w, h, groundY);
     const bands = s.water.map((c, i) =>
       div().absolute().left(0).w(w).top((groundY / s.water.length) * i).h(groundY / s.water.length + 1).bg(c));
     const glints = [0.12, 0.42, 0.71].map((f, i) =>
@@ -678,6 +719,74 @@ export default class Field extends View {
     ];
   }
 
+  // Weeds, rocks and rising bubbles, dimmed for the night scenes.
+  furniture(s, w, groundY, dim) {
+    const weeds = [0.06, 0.33, 0.58, 0.9].map((f, i) =>
+      image(`${ART}/seaweed.svg`).absolute().w(22).h(54 + (i % 2) * 16).top(groundY - 50 - (i % 2) * 16).opacity(dim)
+        .loop("left", { from: w * f, to: w * f + 3, period: 2600 + i * 400 }));
+    const rocks = [0.2, 0.75].map((f) => image(`${ART}/rock.svg`).absolute().left(w * f).top(groundY - 10).w(40).h(18).opacity(dim));
+    const ambient = [0.15, 0.5, 0.82].map((f, i) =>
+      div().absolute().left(w * f).size(4).rounded(this.st.name === "deck" ? 0 : 3).bg(s.bubble)
+        .loop("top", { from: groundY - 20, to: 30, period: 7000 + i * 1900, easing: "linear" })
+        .loop("opacity", { from: 0.7, to: 0, period: 7000 + i * 1900, easing: "linear" }));
+    return [...weeds, ...rocks, ...ambient];
+  }
+
+  // Deck: a sonar tank at night. Near-black bands under a faint grid, a teal sweep crossing it,
+  // and a ruler of ticks along the floor.
+  sonar(s, w, h, groundY) {
+    const t = theme();
+    const bands = s.water.map((c, i) =>
+      div().absolute().left(0).w(w).top((groundY / s.water.length) * i).h(groundY / s.water.length + 1).bg(c));
+    const cols = Array.from({ length: Math.ceil(w / 48) }, (_, i) => div().absolute().top(0).left(i * 48).w(1).h(groundY).bg(s.grid));
+    const rows = Array.from({ length: Math.ceil(groundY / 32) }, (_, i) => div().absolute().left(0).top(i * 32).w(w).h(1).bg(s.grid));
+    const ticks = Array.from({ length: Math.ceil(w / 12) }, (_, i) =>
+      div().absolute().left(i * 12).top(groundY + 1).w(1).h(i % 4 ? 3 : 7).bg(i % 4 ? s.sandEdge : `${t.accent}66`));
+    const sweep = div().absolute().top(0).w(90).h(groundY).flex().justify_end()
+      .loop("left", { from: -90, to: w, period: 9000, easing: "linear" })
+      .child(div().w(30).h_full().bg(`${s.sweep}08`)).child(div().w(1).h_full().bg(`${s.sweep}55`));
+    return [
+      ...bands, ...cols, ...rows, sweep,
+      div().absolute().left(0).w(w).top(groundY).h(h - groundY).bg(s.sand),
+      div().absolute().left(0).w(w).top(groundY).h(1).bg(`${t.accent}55`),
+      ...ticks,
+      ...this.furniture(s, w, groundY, 0.45),
+    ];
+  }
+
+  // LCARS: a black viewscreen with an elbow down the left and a run of coloured bars for a floor.
+  viewscreen(s, w, h, groundY) {
+    const t = theme();
+    const bands = s.water.map((c, i) =>
+      div().absolute().left(0).w(w).top((groundY / s.water.length) * i).h(groundY / s.water.length + 1).bg(c));
+    const stars = Array.from({ length: 18 }, (_, i) => {
+      const k = hash(`star${i}`);
+      return div().absolute().left((k % 1000) / 1000 * w).top(40 + (k >> 10) % Math.max(groundY - 60, 1)).size(1 + (i % 2))
+        .bg(i % 3 ? "#f2e3c655" : "#9999ff88").loop("opacity", { from: 0.2, to: 1, period: 2400 + (k % 2000) });
+    });
+    const cols = [t.ansi3, t.accent, t.ansi5, t.ansi4, t.accent, t.ansi11, t.ansi5];
+    const weights = [3, 7, 2, 5, 1, 4, 2];
+    const total = weights.reduce((a, b) => a + b, 0);
+    const floorW = w - 38 - 4 * cols.length;
+    let x = 32;
+    const floor = cols.map((c, i) => {
+      const bw = (floorW * weights[i]) / total;
+      const el = div().absolute().left(x).top(groundY + 8).w(bw).h(10).bg(c)
+        .when(i === cols.length - 1, (el) => el.rounded_r(5));
+      x += bw + 4;
+      return el;
+    });
+    return [
+      ...bands, ...stars,
+      div().absolute().left(0).w(w).top(groundY).h(h - groundY).bg(s.sand),
+      // The elbow: down from the header bar, round the corner, along the floor.
+      div().absolute().left(6).top(24).w(10).h(groundY - 16).bg(t.accent),
+      div().absolute().left(6).top(groundY + 8).w(22).h(10).bg(t.accent).rounded_bl(8),
+      ...floor,
+      ...this.furniture(s, w, groundY, 0.55),
+    ];
+  }
+
   // Sessions running outside Herdr (the Claude app, another terminal, Codex), read-only: each a
   // translucent critter in a lane on the right. Click opens its chat in a window.
   lane() {
@@ -694,8 +803,16 @@ export default class Field extends View {
     const L = this.lane();
     const now = Date.now();
     return [
-      div().absolute().left(L.x).top(L.top - 4).w(LANE_W).h(groundY - L.top - 2).rounded(10).bg(s.label).opacity(0.35),
-      div().absolute().left(L.x + 8).top(L.top).text_size(9.5).font_semibold().text_color(s.muted).child("Elsewhere"),
+      this.st.name === "soft"
+        ? div().absolute().left(L.x).top(L.top - 4).w(LANE_W).h(groundY - L.top - 2).rounded(10).bg(s.label).opacity(0.35)
+        : div().absolute().left(L.x).top(L.top - 4).w(LANE_W).h(groundY - L.top - 2).rounded(rad(this.st, 10)).bg(`${s.label}`)
+          .border(1).border_color(this.st.name === "lcars" ? `${t.ansi4}88` : s.sandEdge).border_dashed(),
+      this.st.name === "soft"
+        ? div().absolute().left(L.x + 8).top(L.top).text_size(9.5).font_semibold().text_color(s.muted).child("Elsewhere")
+        : h_flex().absolute().left(L.x + 8).top(L.top).gap(5).items_center()
+          .child(div().text_size(this.st.name === "lcars" ? 12 : 9).font_bold().when(this.st.name === "lcars", (el) => el.font_family(this.st.head))
+            .text_color(this.st.name === "lcars" ? t.ansi4 : t.done).child("ELSEWHERE"))
+          .child(div().text_size(8.5).text_color(s.dim).child("// EXT")),
       ...this.outside.map((o, i) => {
         const working = now - o.at * 1000 < 30000;
         const codex = o.kind === "codex";
@@ -715,8 +832,9 @@ export default class Field extends View {
             .when(working, (el) => el.loop("top", { from: 0, to: -3, period: 1300 + (hash(o.id) % 500) }))
             .child(art)))
           .child(v_flex().flex_1().min_w(0)
-            .child(div().truncate().text_size(10).font_semibold().text_color(s.labelInk).child(nickname({ title: o.title, address: o.id }, LANE_W - 50)))
-            .child(div().truncate().text_size(9).text_color(s.muted).child([working ? "working" : "idle", since(o.at * 1000)].filter(Boolean).join(" · "))));
+            .child(div().truncate().text_size(this.st.name === "soft" ? 10 : 9.5).font_semibold().text_color(s.labelInk)
+              .child(caps(this.st, nickname({ title: o.title, address: o.id }, this.st.name === "soft" ? LANE_W - 50 : (LANE_W - 50) * 5.3 / 6.4))))
+            .child(div().truncate().text_size(9).text_color(s.muted).child(caps(this.st, [working ? "working" : "idle", since(o.at * 1000)].filter(Boolean).join(" · ")))));
       }),
     ];
   }
@@ -725,21 +843,51 @@ export default class Field extends View {
     const L = this.lane();
     const W = 240;
     const row = (k, v) => h_flex().gap(8).items_start()
-      .child(div().w(46).flex_none().text_size(10.5).text_color(s.muted).child(k))
+      .child(div().w(46).flex_none().text_size(this.st.name === "soft" ? 10.5 : 9.5).text_color(s.muted).child(caps(this.st, k)))
       .child(div().flex_1().min_w(0).text_size(10.5).text_color(s.labelInk).child(v));
     return v_flex().absolute().left(L.x - W - 6).top(Math.min(Math.max(L.rowTop(i) - 20, 8), this.scene.h - 140)).w(W)
-      .p(10).gap(5).rounded(10).bg(s.card).border(1).border_color(`${s.dim}66`)
-      .child(div().text_size(12).font_semibold().text_color(s.labelInk).child(nickname({ title: o.title, address: o.id })))
+      .p(10).gap(5).rounded(rad(this.st, 10)).bg(s.card).border(1).border_color(`${s.dim}66`)
+      .when(this.st.name === "deck", (el) => el.children(brackets(t, t.done)))
+      .child(div().text_size(12).font_semibold().text_color(this.st.name === "soft" ? s.labelInk : t.accent)
+        .child(caps(this.st, nickname({ title: o.title, address: o.id }))))
       .child(div().text_size(11).text_color(s.labelInk).child(o.title || "No task yet"))
       .child(row("Runs in", this.where(o)))
       .child(row("Folder", (o.cwd || "—").replace(home(), "~")))
       .child(row("Active", `${since(o.at * 1000) || "<1m"} ago`))
-      .child(div().pt(2).text_size(9.5).text_color(s.dim).child("Outside Herdr, read-only · click to open its chat"));
+      .child(div().pt(2).text_size(9.5).text_color(s.dim).child(caps(this.st, "Outside Herdr, read-only · click to open its chat")));
+  }
+
+  // Deck and LCARS: "POND // 01.FLD", the count, state badges with counts, then the buttons.
+  header(t, s, w, list, stats, finished, space) {
+    const st = this.st;
+    const lcars = st.name === "lcars";
+    const button = (id, text, primary, onClick) => h_flex().id(id).h(lcars ? 20 : 20).px(lcars ? 11 : 9).items_center()
+      .rounded(lcars ? 10 : 1).cursor_pointer()
+      .when(primary, (el) => el.bg(s.button))
+      .when(!primary && lcars, (el) => el.bg(t.ansi5))
+      .when(!primary && !lcars, (el) => el.bg(s.label).border(1).border_color(t.border))
+      .hover((el) => el.opacity(0.85))
+      .on_click(onClick)
+      .child(div().when(lcars, (el) => el.font_family(st.head).text_size(14)).when(!lcars, (el) => el.text_size(10).font_bold())
+        .text_color(primary || lcars ? s.buttonInk : s.labelInk).child(caps(st, text)));
+    return h_flex().absolute().left(0).top(0).w(w).pl(lcars ? 6 : 14).pr(lcars ? 10 : 14).pt(lcars ? 12 : 10).items_center().gap(lcars ? 6 : 10)
+      .child(lcars ? heading(st, t, "Pond", `${String(list.length).padStart(2, "0")} agents`)
+        : h_flex().gap(10).items_center()
+          .child(heading(st, t, "Pond", "01.fld"))
+          .child(div().text_size(9.5).text_color(s.muted).child(`${String(list.length).padStart(2, "0")} AGENTS`)))
+      .when(!lcars, (el) => el.child(div().flex_1()))
+      .children(stats.map(([n, word, c]) => h_flex().gap(4).items_center().px(lcars ? 0 : 5).h(20)
+        .when(!lcars, (el) => el.bg(s.label).border(1).border_color(`${c}55`))
+        .child(letterBadge(st, t, lcars ? `${n} ${word}` : { "need you": "B", resting: "I" }[word] ?? word[0].toUpperCase(), c))
+        .when(!lcars, (el) => el.child(div().text_size(10).text_color(s.labelInk).child(String(n).padStart(2, "0"))))))
+      .when(finished.length > 0, (el) => el.child(button("clear-finished", `Clear finished · ${finished.length}`, false, () => this.askClearFinished())))
+      .child(button("new-claude", "+ Claude", true, () => run("tab.new", { name: "claude", argv: ["claude"], space: space?.id })));
   }
 
   render() {
     const t = theme();
-    const s = SCENES[settings().dark ? "dark" : "light"];
+    this.st = style();
+    const s = SCENES[this.st.name === "soft" ? (settings().dark ? "dark" : "light") : this.st.name];
     const list = agents();
     // The reported size is unzoomed; everything drawn here is scaled by the app's zoom.
     const zoom = Number(settings().zoom) || 1;
@@ -759,7 +907,7 @@ export default class Field extends View {
       [count("idle"), "resting", s.dim],
     ].filter(([n]) => n > 0);
 
-    const header = h_flex().absolute().left(0).top(0).w(w).px(18).pt(12).items_center().gap(12)
+    const header = this.st.name !== "soft" ? this.header(t, s, w, list, stats, finished, space) : h_flex().absolute().left(0).top(0).w(w).px(18).pt(12).items_center().gap(12)
       .child(div().text_size(16).font_semibold().text_color(s.ink).child("The pond"))
       .child(div().text_size(12).text_color(s.muted).child(`${list.length} agent${list.length === 1 ? "" : "s"}`))
       .child(div().flex_1())
@@ -779,10 +927,10 @@ export default class Field extends View {
     const empty = list.length ? [] : [
       image(`${ART}/critter-sleep.svg`).absolute().left(w / 2 - CRITTER / 2).top(groundY - CRITTER + 10).w(CRITTER).h(CRITTER * 16 / 22),
       div().absolute().left(0).w(w).top(h * 0.42).flex().justify_center().text_size(12.5).text_color(s.muted)
-        .child("The pond is quiet. Start an agent, or start one from the inbox."),
+        .child(caps(this.st, "The pond is quiet. Start an agent, or start one from the inbox.")),
     ];
 
-    return div().id("pond").relative().size_full().overflow_hidden().rounded(12)
+    return div().id("pond").relative().size_full().overflow_hidden().rounded(rad(this.st, 12))
       .on_size_change((size, cx) => { this.size = size; cx.notify(); })
       .children(this.scenery(s, w, h, groundY))
       .children(empty)

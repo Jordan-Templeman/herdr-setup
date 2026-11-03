@@ -10,6 +10,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, props, run, theme, home, terminals, focused, nextCommand, shared, setShared } from "herdr";
 import { modes, chatFor, toChat, toCli } from "./mode.js";
+import { style, label, badge, LETTER } from "./style.js";
 
 function icon(p, size, color) {
   if (!p?.icon) return null;
@@ -80,6 +81,8 @@ export default class Pane extends View {
   }
 
   modeSwitch(t, p, sw) {
+    const s = style();
+    if (s.name !== "soft") return this.modeSwitchSharp(t, s, p, sw);
     const option = (id, label, active, act) => div()
       .id(`ph-mode-${id}-${p.pane}`)
       .px(8)
@@ -98,7 +101,32 @@ export default class Pane extends View {
       .child(option("chat", "Chat", sw.chat, (cx) => toChat(p, cx)));
   }
 
+  // Deck: two square cells, the active one filled amber. LCARS: two pills, the active one lilac.
+  modeSwitchSharp(t, s, p, sw) {
+    const lcars = s.name === "lcars";
+    const option = (id, text, active, act) => div()
+      .id(`ph-mode-${id}-${p.pane}`)
+      .px(lcars ? 9 : 7)
+      .h(lcars ? 18 : 16)
+      .flex()
+      .items_center()
+      .rounded(lcars ? 9 : 0)
+      .when(lcars, (el) => el.font_family(s.head).text_size(13))
+      .when(!lcars, (el) => el.text_size(9.5).font_bold())
+      .bg(active ? (lcars ? t.ansi5 : t.accent) : lcars ? t.raised : t.background)
+      .text_color(active ? t.background : t.dim)
+      .when(!active, (el) => el.hover((h) => h.text_color(t.foreground)))
+      .on_click((_e, cx) => { cx.stop_propagation(); if (!active) act(cx); })
+      .child(label(s, text));
+    return h_flex().flex_none().gap(lcars ? 3 : 0)
+      .when(!lcars, (el) => el.border(1).border_color(t.border))
+      .child(option("cli", "CLI", !sw.chat, () => toCli(sw.terminal)))
+      .child(option("chat", "Chat", sw.chat, (cx) => toChat(p, cx)));
+  }
+
   render(cx) {
+    const s = style();
+    if (s.name !== "soft") return this.renderSharp(s);
     const t = theme();
     const p = this.me();
     if (!p) return div();
@@ -127,6 +155,48 @@ export default class Pane extends View {
       .when(st === "blocked", el => el.child(div().flex_none().px(6).h(18).flex().items_center().rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).child("Needs you")))
       .when(st === "done", el => el.child(div().size(7).flex_none().rounded(4).bg(t.done)))
       .when(this.hovered, el => el
+        .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
+        .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
+        .child(this.button(t, `ph-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))
+        .child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane })));
+  }
+
+  // Deck and LCARS: the name in caps, status as a letter badge.
+  renderSharp(s) {
+    const t = theme();
+    const p = this.me();
+    if (!p) return div();
+    const lcars = s.name === "lcars";
+    const name = ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
+    const pic = icon(p.program, 13, lcars ? t.accent : t.dim);
+    const st = p.status;
+    const pane = p.pane;
+    const sw = this.switchFor(p);
+    const color = { working: t.working, blocked: t.blocked, done: t.done }[st];
+    return h_flex()
+      .id(`pane-head-${pane}`)
+      .size_full()
+      .px(lcars ? 6 : 10)
+      .gap(8)
+      .items_center()
+      .bg(t.background)
+      .border_b(1)
+      .border_color(t.border)
+      .text_size(11)
+      .on_hover((hovered, cx) => { this.hovered = hovered; cx.notify(); })
+      .on_click(() => run("pane.focus", { pane }))
+      .when(lcars, (el) => el.child(div().w(14).h(18).flex_none().rounded_l(9).bg(color ?? t.accent)))
+      .when(Boolean(pic), (el) => el.child(pic))
+      .child(div().flex_none().truncate().max_w(260)
+        .when(lcars, (el) => el.font_family(s.head).text_size(15).text_color(t.accent))
+        .when(!lcars, (el) => el.font_bold().text_color(t.foreground))
+        .child(label(s, name)))
+      .child(div().flex_1().truncate().text_size(10.5).text_color(t.dim).child(folder(p.cwd)))
+      .when(Boolean(sw), (el) => el.child(this.modeSwitch(t, p, sw)))
+      .when(st === "working", (el) => el.child(div().loop("opacity", { from: 0.35, to: 1, period: 900 }).child(badge(s, t, LETTER.working, t.working))))
+      .when(st === "blocked", (el) => el.child(badge(s, t, "Needs you", t.blocked)))
+      .when(st === "done", (el) => el.child(badge(s, t, LETTER.done, t.done)))
+      .when(this.hovered, (el) => el
         .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
         .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
         .child(this.button(t, `ph-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))

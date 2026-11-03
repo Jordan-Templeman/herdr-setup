@@ -3,6 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { sessionFor, statusOf, openSession, startSession } from "./session.js";
+import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { tokens, langFor, PALETTES } from "./highlight.js";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { exec, spaces, run, theme, notify, props, closeOverlay, settings, home, appHome, shared, setShared } from "herdr";
@@ -111,6 +112,7 @@ function splitRows(lines) {
 
 export default class PrPreview extends View {
   init(_props, cx) {
+    this.s = style();
     this.pr = null;
     this.error = null;
     this.view = "overview";
@@ -259,26 +261,26 @@ export default class PrPreview extends View {
   // Pending comments and the open draft that belong under a line; at(c) says whether c is on it.
   extras(t, path, at, i) {
     const out = pendingFor(props().url).filter((c) => c.path === path && at(c)).map((c) =>
-      h_flex().id(`p-${c.id}`).mx(12).my(6).p(10).gap(10).items_start().rounded(8).border(1).border_color(t.border).bg(t.popover)
+      h_flex().id(`p-${c.id}`).mx(12).my(6).p(10).gap(10).items_start().rounded(rad(this.s, 8)).border(1).border_color(t.border).bg(t.popover)
         .child(v_flex().flex_1().min_w(0).gap(6)
           .child(h_flex().gap(8).items_center()
-            .child(div().px(6).py(1).rounded(5).bg(`${t.working}22`).text_size(10.5).text_color(t.working).child("Pending"))
+            .child(div().px(6).py(1).rounded(rad(this.s, 5)).bg(`${t.working}22`).text_size(10.5).text_color(t.working).child(label(this.s, "Pending")))
             .child(div().text_size(11).text_color(t.dim).child(`${c.side === "LEFT" ? "old" : "new"} line ${c.line}`)))
           .child(TextView.markdown(`pb-${c.id}`, c.body)))
-        .child(div().id(`pd-${c.id}`).p(3).rounded(5).hover((s) => s.bg(t.hover))
+        .child(div().id(`pd-${c.id}`).p(3).rounded(rad(this.s, 5)).hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => { setPendingFor(props().url, pendingFor(props().url).filter((x) => x.id !== c.id)); cx.notify(); })
           .child(svg(`${ICONS}/x.svg`).size(13).text_color(t.muted))));
     const d = this.draft;
     if (d && d.path === path && at(d)) {
-      out.push(v_flex().id(`draft-${i}`).mx(12).my(6).p(10).gap(8).rounded(8).border(1).border_color(t.accent).bg(t.popover)
+      out.push(v_flex().id(`draft-${i}`).mx(12).my(6).p(10).gap(8).rounded(rad(this.s, 8)).border(1).border_color(t.accent).bg(t.popover)
         .child(div().text_size(11).text_color(t.dim).child(`Comment on ${d.side === "LEFT" ? "old" : "new"} line ${d.line}`))
-        .child(div().id("draft-box").rounded(6).border(1).border_color(t.border).p(6)
+        .child(div().id("draft-box").rounded(rad(this.s, 6)).border(1).border_color(t.border).p(6)
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .child(Textarea.new(d.input).h(64).text_size(12.5).text_color(t.foreground)))
         .child(h_flex().gap(8).justify_end()
-          .child(div().id("draft-cancel").px(10).py(5).rounded(6).text_size(12).text_color(t.muted).hover((s) => s.bg(t.hover))
+          .child(div().id("draft-cancel").px(10).py(5).rounded(rad(this.s, 6)).text_size(12).text_color(t.muted).hover((s) => s.bg(t.hover))
             .on_click((_e, cx) => { this.draft = null; cx.notify(); }).child("Cancel"))
-          .child(div().id("draft-add").px(10).py(5).rounded(6).bg(t.solid).text_size(12).text_color(t.solid_foreground)
+          .child(div().id("draft-add").px(10).py(5).rounded(rad(this.s, 6)).bg(t.solid).text_size(12).text_color(t.solid_foreground)
             .hover((s) => s.opacity(0.85))
             .on_click((_e, cx) => this.addDraft(cx)).child("Add to review"))));
     }
@@ -290,21 +292,24 @@ export default class PrPreview extends View {
     const dels = this.files.reduce((n, f) => n + f.dels, 0);
     const allOpen = this.files.every((f) => this.expanded.has(f.name));
     return h_flex().px(20).pt(12).gap(10).items_center()
-      .child(div().text_size(12).text_color(t.muted).child(`${this.files.length} files`))
+      .child(div().text_size(12).text_color(t.muted).child(label(this.s, `${this.files.length} files`)))
       .child(div().text_size(12).text_color(t.ansi2).child(`+${adds}`))
       .child(div().text_size(12).text_color(t.ansi1).child(`−${dels}`))
-      .child(div().text_size(12).text_color(t.dim).child(`${this.files.filter((f) => this.viewed.has(f.name)).length} / ${this.files.length} viewed`))
+      .child(div().text_size(12).text_color(t.dim).child(label(this.s, `${this.files.filter((f) => this.viewed.has(f.name)).length} / ${this.files.length} viewed`)))
       .child(div().flex_1())
-      .child(div().id("toggle-all").px(8).py(4).rounded(6).text_size(12).text_color(t.muted)
+      .child(div().id("toggle-all").px(8).py(4).rounded(rad(this.s, 6)).text_size(12).text_color(t.muted)
         .hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => {
           if (allOpen) this.expanded.clear();
           else for (const f of this.files) this.expanded.add(f.name);
           cx.notify();
         })
-        .child(allOpen ? "Collapse all" : "Expand all"))
-      .child(h_flex().p(3).gap(2).rounded(8).bg(t.surface).children([["unified", "Unified"], ["split", "Split"]].map(([id, label]) =>
-        div().id(`layout-${id}`).px(10).py(3).rounded(6).text_size(12)
+        .child(label(this.s, allOpen ? "Collapse all" : "Expand all")))
+      .child(this.s.name !== "soft"
+        ? this.segments(t, [["unified", "Unified"], ["split", "Split"]].map(([id, text]) =>
+          [id, text, (cx) => { this.layout = id; localStorage.setItem("diffLayout", id); cx.notify(); }]), this.layout, "layout")
+        : h_flex().p(3).gap(2).rounded(rad(this.s, 8)).bg(t.surface).children([["unified", "Unified"], ["split", "Split"]].map(([id, label]) =>
+        div().id(`layout-${id}`).px(10).py(3).rounded(rad(this.s, 6)).text_size(12)
           .text_color(this.layout === id ? t.foreground : t.muted)
           .when(this.layout === id, (el) => el.bg(t.raised))
           .hover((s) => s.bg(t.hover))
@@ -313,13 +318,33 @@ export default class PrPreview extends View {
       .child(this.submitButton(t));
   }
 
+  // A choice of views: a segmented control (soft), square cells (deck) or pills (lcars).
+  segments(t, items, current, prefix) {
+    const st = this.s;
+    const lcars = st.name === "lcars";
+    return h_flex().p(lcars || st.name === "deck" ? 0 : 3).gap(lcars ? 4 : 2).rounded(rad(st, 8))
+      .when(st.name === "soft", (el) => el.bg(t.surface))
+      .when(st.name === "deck", (el) => el.border(1).border_color(t.border).gap(0))
+      .children(items.map(([id, text, go]) => {
+        const on = current === id;
+        return div().id(`${prefix}-${id}`).px(10).py(lcars ? 2 : st.name === "deck" ? 3 : 4).rounded(rad(st, 6)).text_size(st.name === "deck" ? 11 : 12)
+          .text_color(on ? (st.name === "soft" ? t.foreground : t.background) : t.muted)
+          .when(on, (el) => el.bg(st.name === "soft" ? t.raised : lcars ? t.ansi5 : t.accent))
+          .when(lcars, (el) => el.font_family(st.head).text_size(15).when(!on, (el) => el.bg(t.raised)))
+          .when(st.name === "deck", (el) => el.font_bold())
+          .hover((s) => (on && st.name !== "soft" ? s : s.bg(t.hover)))
+          .on_click((_e, cx) => go(cx))
+          .child(label(st, text));
+      }));
+  }
+
   submitButton(t) {
     const n = pendingFor(props().url).length;
-    return h_flex().id("submit-review").gap(6).items_center().px(11).py(4).rounded(7).bg(t.solid)
+    return h_flex().id("submit-review").gap(6).items_center().px(11).py(4).rounded(rad(this.s, 7)).bg(t.solid)
       .hover((s) => s.opacity(0.85))
       .on_click((_e, cx) => { this.composing = true; this.reviewError = null; cx.notify(); })
       .child(svg(`${ICONS}/square-pen.svg`).size(13).text_color(t.solid_foreground))
-      .child(div().text_size(12).text_color(t.solid_foreground).child(n ? `Submit review · ${n}` : "Submit review"));
+      .child(div().text_size(12).text_color(t.solid_foreground).child(label(this.s, n ? `Submit review · ${n}` : "Submit review")));
   }
 
   filesView(t) {
@@ -332,7 +357,7 @@ export default class PrPreview extends View {
       .children(this.files.map((f, fi) => {
         const open = this.expanded.has(f.name);
         const shown = open ? f.lines.slice(0, MAX_LINES) : [];
-        return v_flex().flex_none().rounded(8).border(1).border_color(t.border)
+        return v_flex().flex_none().rounded(rad(this.s, 8)).border(1).border_color(t.border)
           .child(h_flex().id(`f-${fi}`).px(12).py(8).gap(8).items_center().bg(t.surface)
             .when(open, (el) => el.border_b(1).border_color(t.border))
             .hover((s) => s.bg(t.hover))
@@ -341,17 +366,17 @@ export default class PrPreview extends View {
             .child(div().flex_1().min_w(0).truncate().font_family(mono).text_size(12).text_color(t.foreground).child(f.name))
             .child(div().text_size(11.5).text_color(t.ansi2).child(`+${f.adds}`))
             .child(div().text_size(11.5).text_color(t.ansi1).child(`−${f.dels}`))
-            .child(h_flex().id(`v-${fi}`).ml(6).gap(6).items_center().px(8).py(3).rounded(6).border(1)
+            .child(h_flex().id(`v-${fi}`).ml(6).gap(6).items_center().px(8).py(3).rounded(rad(this.s, 6)).border(1)
               .border_color(this.viewed.has(f.name) ? t.accent : t.border)
               .when(this.viewed.has(f.name), (el) => el.bg(`${t.accent}1a`))
               .hover((s) => s.bg(t.hover))
               .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
               .on_click((_e, cx) => { cx.stop_propagation(); this.toggleViewed(f.name, cx); })
-              .child(div().size(13).flex_none().rounded(3).border(1)
+              .child(div().size(13).flex_none().rounded(rad(this.s, 3)).border(1)
                 .border_color(this.viewed.has(f.name) ? t.accent : t.input)
                 .when(this.viewed.has(f.name), (el) => el.bg(t.accent).flex().items_center().justify_center()
                   .child(svg(`${ICONS}/check.svg`).size(10).text_color(t.accent_foreground))))
-              .child(div().text_size(11.5).text_color(this.viewed.has(f.name) ? t.foreground : t.muted).child("Viewed"))))
+              .child(div().text_size(11.5).text_color(this.viewed.has(f.name) ? t.foreground : t.muted).child(label(this.s, "Viewed")))))
           .when(open && split, (el) => el.child(v_flex().py(4).overflow_hidden()
             .children(splitRows(shown).flatMap((row, i) => [
               this.splitRow(t, row, `${fi}-${i}`, mono, f.name),
@@ -415,7 +440,7 @@ export default class PrPreview extends View {
     const act = (id, icon, label, primary, kind) => button(id, icon, this.submitting === kind ? "Sending…" : label, primary,
       (_e, cx) => { if (!busy) this.submit(kind, cx); });
     return v_flex().px(20).py(12).gap(8).border_t(1).border_color(t.border).bg(t.surface)
-      .child(div().id("reply").rounded(8).border(1).border_color(t.border).bg(t.popover).p(8)
+      .child(div().id("reply").rounded(rad(this.s, 8)).border(1).border_color(t.border).bg(t.popover).p(8)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .child(Textarea.new(this.reply).h(96).text_size(12.5).text_color(t.foreground)))
       .when(Boolean(this.reviewError), (el) => el.child(div().text_size(12).text_color(t.blocked).child(this.reviewError)))
@@ -431,7 +456,7 @@ export default class PrPreview extends View {
   }
 
   copyLink(t, url, mod) {
-    return h_flex().id("copy-link").gap(5).items_center().px(8).py(4).rounded(6)
+    return h_flex().id("copy-link").gap(5).items_center().px(8).py(4).rounded(rad(this.s, 6))
       .hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => {
         cx.write_to_clipboard(url);
@@ -440,7 +465,7 @@ export default class PrPreview extends View {
         cx.timer.after(1500, (cx) => { this.copied = false; cx.notify(); });
       })
       .child(svg(this.copied ? `${ICONS}/check.svg` : `mods/${mod}/link.svg`).size(13).text_color(this.copied ? t.done : t.muted))
-      .child(div().text_size(11.5).text_color(this.copied ? t.done : t.muted).child(this.copied ? "Copied" : "Copy link"));
+      .child(div().text_size(11.5).text_color(this.copied ? t.done : t.muted).child(label(this.s, this.copied ? "Copied" : "Copy link")));
   }
 
   close() {
@@ -467,19 +492,24 @@ export default class PrPreview extends View {
   }
 
 
-  field(t, label, value) {
+  field(t, name, value) {
     if (!value) return null;
+    const soft = this.s.name === "soft";
     return h_flex().gap(12).items_start()
-      .child(div().w(84).flex_none().text_size(12).text_color(t.dim).child(label))
+      .child(div().w(84).flex_none().text_size(soft ? 12 : 10.5).text_color(t.dim).when(!soft, (el) => el.pt(1)).child(label(this.s, name)))
       .child(typeof value === "string" ? div().flex_1().text_size(12.5).text_color(t.foreground).child(value) : value);
   }
 
   pill(text, color) {
-    return div().px(8).py(2).rounded(6).bg(`${color}22`).text_size(11).text_color(color).child(text);
+    if (this.s.name !== "soft") return badge(this.s, theme(), text, color);
+    return div().px(8).py(2).rounded(rad(this.s, 6)).bg(`${color}22`).text_size(11).text_color(color).child(text);
   }
 
   render() {
     const t = theme();
+    const st = (this.s = style());
+    const soft = st.name === "soft";
+    const lcars = st.name === "lcars";
     const { key, url } = props() ?? {};
     const p = this.pr;
 
@@ -492,24 +522,21 @@ export default class PrPreview extends View {
     const reviewColor = p?.reviewDecision === "APPROVED" ? t.done : p?.reviewDecision === "CHANGES_REQUESTED" ? t.blocked : t.muted;
     const c = p && checks(p.statusCheckRollup);
 
-    const header = h_flex().px(20).py(12).gap(10).items_center().border_b(1).border_color(t.border)
-      .child(div().text_size(12).text_color(t.muted).child("Pull request"))
-      .child(div().text_size(12.5).font_semibold().text_color(t.foreground).child(key ?? ""))
+    const header = h_flex().px(lcars ? 12 : 20).py(12).gap(10).items_center().border_b(1).border_color(t.border)
+      .when(soft, (el) => el.child(div().text_size(12).text_color(t.muted).child("Pull request")))
+      .when(!soft, (el) => el.child(heading(st, t, "Pull request", lcars ? "08-git" : "08.git")))
+      .child(div().text_size(12.5).font_semibold().text_color(soft ? t.foreground : t.accent).when(lcars, (el) => el.font_family(st.head).text_size(17))
+        .child(key ?? ""))
       .when(Boolean(state), (el) => el.child(this.pill(state[0], state[1])))
       .when(Boolean(review), (el) => el.child(this.pill(review, reviewColor)))
-      .when(p?.mergeStateStatus === "BEHIND", (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Behind base")))
-      .child(div().flex_1())
+      .when(p?.mergeStateStatus === "BEHIND", (el) => el.child(div().text_size(11.5).text_color(t.dim).child(label(st, "Behind base"))))
+      .when(!lcars, (el) => el.child(div().flex_1()))
       .when(Boolean(url), (el) => el.child(this.copyLink(t, url, "pr-preview")))
-      .when(Boolean(p), (el) => el.child(h_flex().p(3).gap(2).rounded(8).bg(t.surface).children([
+      .when(Boolean(p), (el) => el.child(this.segments(t, [
         ["overview", "Overview", (cx) => { this.view = "overview"; cx.notify(); }],
         ["files", `Files changed ${p.changedFiles}`, (cx) => this.showFiles(cx)],
-      ].map(([id, label, go]) => div().id(`view-${id}`).px(10).py(4).rounded(6).text_size(12)
-        .text_color(this.view === id ? t.foreground : t.muted)
-        .when(this.view === id, (el) => el.bg(t.raised))
-        .hover((s) => s.bg(t.hover))
-        .on_click((_e, cx) => go(cx))
-        .child(label)))))
-      .child(div().id("close").p(4).rounded(6).hover((s) => s.bg(t.hover))
+      ], this.view, "view")))
+      .child(div().id("close").p(4).rounded(rad(this.s, 6)).hover((s) => s.bg(t.hover))
         .on_click(() => this.close())
         .child(svg(`${ICONS}/x.svg`).size(15).text_color(t.muted)));
 
@@ -534,7 +561,7 @@ export default class PrPreview extends View {
       const description = (p.body ?? "").replace(/\r\n/g, "\n").replace(/<!--[\s\S]*?-->/g, "").trim();
 
       body = v_flex().id("body").flex_1().min_h(0).px(20).py(16).gap(16).overflow_y_scrollbar()
-        .child(div().text_size(18).font_semibold().text_color(t.foreground).child(p.title))
+        .child(div().text_size(18).font_semibold().text_color(t.foreground).when(lcars, (el) => el.font_family(st.head).text_size(24)).child(p.title))
         .child(v_flex().gap(7).children([
           this.field(t, "Author", p.author?.name ? `${p.author.name} (${p.author.login})` : p.author?.login),
           this.field(t, "Branch", `${p.headRefName} → ${p.baseRefName}`),
@@ -545,20 +572,23 @@ export default class PrPreview extends View {
           this.field(t, "Labels", (p.labels ?? []).map((l) => l.name).join(", ")),
         ].filter(Boolean)))
         .child(v_flex().gap(6)
-          .child(div().text_size(12).text_color(t.dim).child("Description"))
+          .child(soft ? div().text_size(12).text_color(t.dim).child("Description") : heading(st, t, "Description", null, lcars ? t.ansi5 : t.muted))
           .child(description
             ? TextView.markdown(`body-${key}`, description)
-            : div().text_size(12.5).text_color(t.muted).child("No description.")));
+            : div().text_size(12.5).text_color(t.muted).child(label(st, "No description."))));
     }
 
-    const button = (id, icon, label, primary, onClick) =>
-      h_flex().id(id).gap(6).items_center().px(12).py(6).rounded(7)
+    // LCARS fills every button: primary orange, the rest lilac.
+    const button = (id, icon, text, primary, onClick) =>
+      h_flex().id(id).gap(6).items_center().px(12).py(lcars ? 4 : 6).rounded(rad(this.s, 7))
         .when(primary, (el) => el.bg(t.solid))
-        .when(!primary, (el) => el.border(1).border_color(t.border))
+        .when(!primary && lcars, (el) => el.bg(t.ansi5))
+        .when(!primary && !lcars, (el) => el.border(1).border_color(t.border))
         .hover((s) => s.opacity(0.85))
         .on_click(onClick)
-        .child(svg(`${ICONS}/${icon}.svg`).size(13).text_color(primary ? t.solid_foreground : t.foreground))
-        .child(div().text_size(12.5).text_color(primary ? t.solid_foreground : t.foreground).child(label));
+        .child(svg(`${ICONS}/${icon}.svg`).size(13).text_color(primary || lcars ? t.solid_foreground : t.foreground))
+        .child(div().text_size(soft ? 12.5 : 11).when(!soft, (el) => el.font_bold()).when(lcars, (el) => el.font_family(st.head).text_size(16))
+          .text_color(primary || lcars ? t.solid_foreground : t.foreground).child(label(st, text)));
 
     const footer = h_flex().px(20).py(12).gap(8).justify_end().border_t(1).border_color(t.border)
       .when(Boolean(p), (el) => el.child(button("review", this.composing ? "chevron-down" : "square-pen",
@@ -567,8 +597,9 @@ export default class PrPreview extends View {
       .child(button("open", "git-branch", "Open on GitHub", false, () => { exec("open", [url]); this.close(); }))
       .children([this.sessionButton(button)].filter(Boolean));
 
-    return v_flex().size_full().bg(t.popover).child(header).child(body)
+    return v_flex().size_full().relative().bg(t.popover).child(header).child(body)
       .when(this.composing && Boolean(p), (el) => el.child(this.composer(t, button)))
-      .child(footer);
+      .child(footer)
+      .when(st.name === "deck", (el) => el.children(brackets(t, t.accent, 14)));
   }
 }

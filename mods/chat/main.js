@@ -58,8 +58,10 @@ const dedent = (s) => {
 // Jira tickets and GitHub pull requests open in the inbox's previews; other links in the browser.
 // A chat pane opens them beside itself; a chat window (⌘⇧K), which has no pane, as dialogs.
 function openLink(url, cx) {
-  const ticket = /atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)/.exec(url);
-  const pr = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
+  // Only a bare PR or ticket goes to a preview; anything deeper (a comment anchor, /files, a
+  // focused comment) opens where it points.
+  const ticket = /atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)\/?$/.exec(url);
+  const pr = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/.exec(url);
   const target = ticket ? { mod: "jira-preview", props: { key: ticket[1] }, width: 820 }
     : pr ? { mod: "pr-preview", props: { url: `https://github.com/${pr[1]}/${pr[2]}/pull/${pr[3]}`, key: `${pr[2]}#${pr[3]}` }, width: 0.85 }
     : null;

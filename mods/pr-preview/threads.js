@@ -609,8 +609,8 @@ export function card(t, s, i, open, w, prefix, rep) {
   // A shown, selected comment's action bar carries the thread's actions, so the footer steps aside.
   const sel = rep && !rep.edits.has(rep.selected) && (first?.id === rep.selected || (showReplies && replies.some((c) => c.id === rep.selected)));
   return v_flex().id(`${prefix}-${i.id}`).when(w == null, (el) => el.mx(0)).when(w != null, (el) => el.w(w).mx(10)).my(5).p(9).gap(7).rounded(rad(s, 8)).border(1).border_l(3)
-    .border_color(ghPending ? t.ansi5 : dim ? t.border : color).bg(t.popover)
-    .when(dim && !flat, (el) => el.opacity(0.62))
+    .border_color(ghPending ? t.ansi5 : dim && !drafted ? t.border : color).bg(t.popover)
+    .when(dim && !flat && !drafted, (el) => el.opacity(0.62))
     .when(!flat, (el) => el.child(head))
     .when(expanded && Boolean(first), (el) => el
       .when(!i.anchored && !i.file, (el) => el.children([anchorView(t, s, i, first, prefix)].filter(Boolean)))

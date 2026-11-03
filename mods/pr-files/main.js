@@ -347,7 +347,7 @@ export default class PrFiles extends View {
       .child(this.button(t, s, "view-comments", this.showComments ? "Files" : `Comments · ${all.total}`, null, false, (_e, cx) => { this.showComments = !this.showComments; this.showDrafts = false; cx.notify(); }))
       .when(pending.length > 0 && Boolean(this.agent), (el) => el.child(this.button(t, s, "send-all",
         this.sending === "all" ? "Sending…" : `Send ${pending.length} to agent`, `${ICONS}/terminal.svg`, false, (_e, cx) => this.toAgent(url, pendingFor(url), cx, false))))
-      .child(pending.length
+      .child(pending.length && !this.prs.get(url)?.threads?.own
         ? this.button(t, s, "submit-review", `Submit review · ${pending.length}`, `${ICONS}/square-pen.svg`, true, () => this.openReview(url))
         : div().text_size(10.5).text_color(t.dim).child(label(s, "Click a line number to comment")));
     const filter = files.length > 8 && div().id("filter").mx(8).mb(4).h(26).px(8).flex().items_center().rounded(rad(s, 6)).border(1).border_color(t.border)
@@ -459,7 +459,7 @@ export default class PrFiles extends View {
         .child(h_flex().gap(8).justify_end()
           .child(this.button(t, s, "draft-cancel", "Cancel", null, false, (_e, cx) => { this.draft = null; cx.notify(); }))
           .when(Boolean(this.agent), (el) => el.child(this.button(t, s, "draft-agent", this.sending === "draft" ? "Sending…" : "Send to agent", null, false, (_e, cx) => this.sendDraft(cx))))
-          .child(this.button(t, s, "draft-add", "Add to review", null, true, (_e, cx) => this.addDraft(cx)))));
+          .when(!this.prs.get(this.url)?.threads?.own, (el) => el.child(this.button(t, s, "draft-add", "Add to review", null, true, (_e, cx) => this.addDraft(cx))))));
     }
     return [...threads, ...drafted, ...out];
   }

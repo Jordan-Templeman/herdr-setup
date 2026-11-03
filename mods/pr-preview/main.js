@@ -531,9 +531,10 @@ export default class PrPreview extends View {
               const body = d.input.value().trim();
               if (body) this.toAgent([{ path: d.path, side: d.side, line: d.line, body }], cx, true);
             }).child(this.sending === "draft" ? "Sending…" : "Send to agent")))
-          .child(div().id("draft-add").px(10).py(5).rounded(rad(this.s, 6)).bg(t.solid).text_size(12).text_color(t.solid_foreground)
+          // Your own PR takes no review, so a line comment there goes to the agent only.
+          .when(Boolean(this.terminal) || !this.threads?.own, (el) => el.child(div().id("draft-add").px(10).py(5).rounded(rad(this.s, 6)).bg(t.solid).text_size(12).text_color(t.solid_foreground)
             .hover((s) => s.opacity(0.85))
-            .on_click((_e, cx) => this.addDraft(cx)).child(this.terminal ? "Add comment" : "Add to review"))));
+            .on_click((_e, cx) => this.addDraft(cx)).child(this.terminal ? "Add comment" : "Add to review")))));
     }
     return [...threads, ...drafted, ...out];
   }
@@ -605,6 +606,7 @@ export default class PrPreview extends View {
   }
 
   submitButton(t) {
+    if (!this.terminal && this.threads?.own) return div();
     const n = pendingFor(this.key).length;
     if (this.terminal) {
       return h_flex().id("send-comments").gap(6).items_center().px(11).py(4).rounded(rad(this.s, 7))
@@ -999,7 +1001,7 @@ export default class PrPreview extends View {
           .text_color(primary || lcars ? t.solid_foreground : t.foreground).child(label(st, text)));
 
     const footer = h_flex().px(20).py(12).gap(8).flex_wrap().justify_end().border_t(1).border_color(t.border)
-      .when(Boolean(p), (el) => el.child(button("review", this.composing ? "chevron-down" : "square-pen",
+      .when(Boolean(p) && !this.threads?.own, (el) => el.child(button("review", this.composing ? "chevron-down" : "square-pen",
         this.composing ? "Hide review" : pendingFor(url).length ? `Submit review · ${pendingFor(url).length} pending` : "Submit review", pendingFor(url).length > 0 && !this.composing, (_e, cx) => { this.composing = !this.composing; this.reviewError = null; cx.notify(); })))
       .child(this.ghPendingNote(t) && !this.composing ? this.ghPendingNote(t).flex_1() : div().flex_1())
       .child(button("open", "git-branch", "Open on GitHub", false, () => { exec("open", [url]); this.close(); }))

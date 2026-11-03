@@ -267,8 +267,9 @@ export function draftCard(t, s, p, ctl, prefix) {
   const acts = [];
   if (p.kind === "thread") {
     acts.push(btn(t, s, id("n"), busy === "reply" ? "Posting…" : "Reply now", true, (cx) => ctl.post(d, p, "now", cx)));
+    const own = Boolean(ctl.data()?.own);
     if (p.thread?.canResolve && !p.thread.resolved) acts.push(btn(t, s, id("x"), busy === "reply and resolve" ? "Posting…" : "Reply & resolve", false, (cx) => ctl.post(d, p, "resolve", cx)));
-    acts.push(btn(t, s, id("r"), busy === "add to review" ? "Adding…" : "Add to review", false, (cx) => ctl.post(d, p, "review", cx)));
+    if (!own) acts.push(btn(t, s, id("r"), busy === "add to review" ? "Adding…" : "Add to review", false, (cx) => ctl.post(d, p, "review", cx)));
   } else if (p.kind === "inline") {
     acts.push(btn(t, s, id("r"), busy ? "Adding…" : "Add to review", true, (cx) => ctl.post(d, p, "review", cx)));
   } else if (p.kind === "comment" || p.kind === "general") {
@@ -315,7 +316,7 @@ export function draftList(t, s, ctl, onPick, onHide) {
     .child(h_flex().px(6).pb(4).gap(8).items_center()
       .child(div().flex_none().text_size(11).font_semibold().text_color(t.ansi3).child(label(s, `Drafts · ${all.length}`)))
       .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.dim).child("Click one to jump to it · Post all adds them to your pending review"))
-      .when(n > 0, (el) => el.child(btn(t, s, "dl-all", ctl.busy?.id === "all" ? "Adding…" : ctl.confirm === "all" ? `Click again: add ${n}` : `Post all · ${n}`, true, (cx) => ctl.postAll(cx))))
+      .when(n > 0 && !ctl.data()?.own, (el) => el.child(btn(t, s, "dl-all", ctl.busy?.id === "all" ? "Adding…" : ctl.confirm === "all" ? `Click again: add ${n}` : `Post all · ${n}`, true, (cx) => ctl.postAll(cx))))
       .when(Boolean(onHide), (el) => el.child(btn(t, s, "dl-hide", "Hide ▴", false, (cx) => onHide(cx)))))
     .children(all.map((p) => h_flex().id(`dl-${p.d.id}`).h(24).flex_none().px(6).gap(10).items_center().rounded(rad(s, 6)).cursor_pointer()
       .hover((el) => el.bg(t.hover)).on_click((_e, cx) => onPick(p, cx))

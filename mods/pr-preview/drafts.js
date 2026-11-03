@@ -293,24 +293,29 @@ export function draftCard(t, s, p, ctl, prefix) {
 
 // The Drafts list: where each goes, its first line, its agent; onPick(p, cx) jumps to it. Post all adds
 // every thread reply and line comment to your pending review.
-export function draftList(t, s, ctl, onPick) {
+// Plain text for a one-line excerpt: markdown links read as their label.
+const plain = (md) => md.split("\n")[0].replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[`*_]/g, "");
+
+// onHide (optional): a Hide control in the list's header.
+export function draftList(t, s, ctl, onPick, onHide) {
   const all = ctl.placed();
   if (!all.length) return div().p(12).text_size(12).text_color(t.dim).child("No drafts. Agents add them with bin/herdr-draft.");
   const n = all.filter((p) => p.kind === "thread" || p.kind === "inline").length;
   const at = (p) => {
     const i = p.thread;
-    if (i) return `${i.path}:${i.anchored ? i.line : `was ${i.originalLine ?? "?"}`}`;
-    if (p.d.path) return `${p.d.path}:${p.d.line}`;
+    if (i) return `${i.path.split("/").pop()}:${i.anchored ? i.line : `was ${i.originalLine ?? "?"}`}`;
+    if (p.d.path) return `${p.d.path.split("/").pop()}:${p.d.line}`;
     return p.kind === "unplaced" ? "not found" : "conversation";
   };
-  return v_flex().gap(4)
-    .when(n > 0, (el) => el.child(h_flex().px(6).pb(4).gap(8).items_center()
-      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child("Adds to your pending review; you submit it."))
-      .child(btn(t, s, "dl-all", ctl.busy?.id === "all" ? "Adding…" : ctl.confirm === "all" ? `Click again: add ${n}` : `Post all as review · ${n}`, true, (cx) => ctl.postAll(cx)))))
-    .children(all.map((p) => v_flex().id(`dl-${p.d.id}`).px(6).py(4).gap(2).rounded(rad(s, 6)).cursor_pointer()
+  return v_flex().gap(2)
+    .child(h_flex().px(6).pb(4).gap(8).items_center()
+      .child(div().flex_none().text_size(11).font_semibold().text_color(t.ansi3).child(label(s, `Drafts · ${all.length}`)))
+      .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.dim).child("Click one to jump to it · Post all adds them to your pending review"))
+      .when(n > 0, (el) => el.child(btn(t, s, "dl-all", ctl.busy?.id === "all" ? "Adding…" : ctl.confirm === "all" ? `Click again: add ${n}` : `Post all · ${n}`, true, (cx) => ctl.postAll(cx))))
+      .when(Boolean(onHide), (el) => el.child(btn(t, s, "dl-hide", "Hide ▴", false, (cx) => onHide(cx)))))
+    .children(all.map((p) => h_flex().id(`dl-${p.d.id}`).h(24).flex_none().px(6).gap(10).items_center().rounded(rad(s, 6)).cursor_pointer()
       .hover((el) => el.bg(t.hover)).on_click((_e, cx) => onPick(p, cx))
-      .child(h_flex().gap(7).items_center().min_w(0)
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(p.kind === "unplaced" ? t.blocked : t.accent).child(at(p)))
-        .child(div().flex_none().text_size(10.5).text_color(t.ansi3).child(p.d.agent || "agent")))
-      .child(div().truncate().text_size(11.5).text_color(t.muted).child(p.d.body.split("\n")[0]))));
+      .child(div().w(190).flex_none().truncate().text_size(11).text_color(p.kind === "unplaced" ? t.blocked : t.accent).child(at(p)))
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(plain(p.d.body)))
+      .child(div().flex_none().text_size(10.5).text_color(t.dim).child(p.d.agent || "agent"))));
 }

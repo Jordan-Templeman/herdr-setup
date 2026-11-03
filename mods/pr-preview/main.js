@@ -1008,8 +1008,8 @@ export default class PrPreview extends View {
     // The Drafts list sits above the view, like a drawer; the view keeps its toolbar and scrolls below it.
     if (this.showDrafts && p && this.view !== "overview") {
       body = v_flex().flex_1().min_h(0).w_full()
-        .child(v_flex().id("draft-list").flex_none().w_full().max_h(240).px(14).py(8).border_b(1).border_color(t.border).bg(t.surface).overflow_y_scrollbar()
-          .child(draftList(t, st, this.drafts, (d, cx) => { this.showDrafts = false; this.pickDraft(d, cx); })))
+        .child(v_flex().id("draft-list").flex_none().w_full().max_h(200).px(14).py(8).border_b(1).border_color(t.border).bg(t.surface).overflow_y_scrollbar()
+          .child(draftList(t, st, this.drafts, (d, cx) => { this.showDrafts = false; this.pickDraft(d, cx); }, (cx) => { this.showDrafts = false; cx.notify(); })))
         .child(body);
     }
     return v_flex().size_full().relative().bg(t.popover).child(header).child(body)

@@ -2,9 +2,15 @@
 # Prints what Herdr's mods see right now: panes, agents, terminals (with their OSC 7501 records and
 # labels, which `hc ls` leaves out) and shared mod state. Needs the pond on screen.
 # Usage: bin/herdr-inspect [section]   section: panes | agents | terminals | shared | focused
+#        bin/herdr-inspect --set key '<json>' [section]   change a shared value first (cleanup, test switches)
 dir="$(cd "$(dirname "$0")/.." && pwd)/inspect"
 mkdir -p "$dir"; before=$(stat -f %m "$dir/state.json" 2>/dev/null || echo 0)
-touch "$dir/request"
+if [ "$1" = --set ]; then
+  python3 -c 'import json,sys; print(json.dumps({"set": {sys.argv[1]: json.loads(sys.argv[2])}}))' "$2" "$3" > "$dir/request" || exit 1
+  shift 3
+else
+  touch "$dir/request"
+fi
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 0.3
   now=$(stat -f %m "$dir/state.json" 2>/dev/null || echo 0)

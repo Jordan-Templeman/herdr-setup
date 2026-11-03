@@ -1,9 +1,9 @@
 // Answers bin/herdr-inspect: when it drops a request file in inspect/, writes what the mods see
 // (panes, agents, terminals with their status records, the shared values mods keep) to
 // inspect/state.json. Runs in the pond because Herdr only runs mods that are shown.
-import { appHome, panes, agents, terminals, shared, focused, watchFolder, exec, readTextFile, writeTextFile } from "herdr";
+import { appHome, panes, agents, terminals, shared, focused, watchFolder, exec, readTextFile, writeTextFile, setShared } from "herdr";
 
-const SHARED = ["pane-plus.chat", "pane-plus.pending", "pr-preview.pending", "layout"];
+const SHARED = ["pane-plus.chat", "pane-plus.pending", "pr-preview.pending", "pr-preview.dryRun", "layout"];
 
 export function serveInspect(cx) {
   const dir = `${appHome()}/inspect`;
@@ -11,8 +11,11 @@ export function serveInspect(cx) {
     await exec("mkdir", ["-p", dir]);
     for (;;) {
       await watchFolder(dir);
+      // A request may carry {"set": {key: value}}: shared values to change first (for cleanup).
+      const ask = await readTextFile(`${dir}/request`).catch(() => null);
       const r = await exec("rm", [`${dir}/request`]);
       if (r.code !== 0) continue;
+      try { for (const [k, v] of Object.entries(JSON.parse(ask || "{}").set ?? {})) setShared(k, v); } catch {}
       const state = {
         at: new Date().toISOString(),
         focused: focused(),

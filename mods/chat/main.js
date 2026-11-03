@@ -56,12 +56,16 @@ const dedent = (s) => {
 };
 
 // Jira tickets and GitHub pull requests open in the inbox's previews; other links in the browser.
+// A chat pane opens them beside itself; a chat window (⌘⇧K), which has no pane, as dialogs.
 function openLink(url, cx) {
   const ticket = /atlassian\.net\/browse\/([A-Z][A-Z0-9]+-\d+)/.exec(url);
-  if (ticket) return openOverlay({ mod: "jira-preview", props: { key: ticket[1] }, kind: "dialog", width: 820, height: 0.9 });
   const pr = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(url);
-  if (pr) return openOverlay({ mod: "pr-preview", props: { url: `https://github.com/${pr[1]}/${pr[2]}/pull/${pr[3]}` }, kind: "dialog", width: 0.85, height: 0.9 });
-  cx.open_url(url);
+  const target = ticket ? { mod: "jira-preview", props: { key: ticket[1] }, width: 820 }
+    : pr ? { mod: "pr-preview", props: { url: `https://github.com/${pr[1]}/${pr[2]}/pull/${pr[3]}`, key: `${pr[2]}#${pr[3]}` }, width: 0.85 }
+    : null;
+  if (!target) return cx.open_url(url);
+  if (props()?.overlay) return openOverlay({ mod: target.mod, props: target.props, kind: "dialog", width: target.width, height: 0.9 });
+  run("pane.split", { direction: "right", mod: target.mod, props: target.props });
 }
 
 export default class Chat extends View {

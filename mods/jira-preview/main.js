@@ -214,8 +214,9 @@ export default class JiraPreview extends View {
       .child(div().text_size(11.5).text_color(this.copied ? t.done : t.muted).child(label(this.s, this.copied ? "Copied" : "Copy link")));
   }
 
+  // As a dialog, closes it; as a pane beside a chat, the pane header closes it instead.
   close() {
-    closeOverlay(props().overlay);
+    if (props()?.overlay) closeOverlay(props().overlay);
   }
 
   // Footer action: back to the item's session, else its start action (from the inbox), else none.
@@ -266,9 +267,17 @@ export default class JiraPreview extends View {
       .when(Boolean(i?.priority), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(label(st, i.priority))))
       .when(!lcars, (el) => el.child(div().flex_1()))
       .when(Boolean(key), (el) => el.child(this.copyLink(t, this.link(key), "jira-preview")))
-      .child(div().id("close").p(4).rounded(rad(this.s, 6)).hover((s) => s.bg(t.hover))
+      .when(Boolean(props()?.overlay), (el) => el.child(div().id("beside").px(8).py(4).rounded(rad(this.s, 6)).text_size(11.5).text_color(t.muted)
+        .hover((s) => s.bg(t.hover))
+        .on_click(() => {
+          const { key } = props();
+          this.close();
+          run("pane.split", { direction: "right", mod: "jira-preview", props: { key } });
+        })
+        .child(label(this.s, "Open beside"))))
+      .when(Boolean(props()?.overlay), (el) => el.child(div().id("close").p(4).rounded(rad(this.s, 6)).hover((s) => s.bg(t.hover))
         .on_click(() => this.close())
-        .child(svg(`${ICONS}/x.svg`).size(15).text_color(t.muted)));
+        .child(svg(`${ICONS}/x.svg`).size(15).text_color(t.muted))));
 
     let body;
     if (this.error) body = div().p(20).text_size(12.5).text_color(t.blocked).child(this.error);

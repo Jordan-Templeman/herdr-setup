@@ -5,12 +5,13 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
-import { exec, focused, agents, terminals, theme, settings, shared, setShared, openOverlay, home } from "herdr";
+import { exec, focused, agents, terminals, theme, settings, shared, setShared, openOverlay, home, notify } from "herdr";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { modes } from "./mode.js";
-import { parseDiff } from "./diff.js";
+import { parseDiff, agentMessage } from "./diff.js";
+import { sendToAgent, agentName } from "./session.js";
 import { tokens, langFor, paletteFor } from "./highlight.js";
-import { loadThreads, place, threadsAt, elsewhere, fileCounts, summary, card, elsewhereBlock, allComments, commentList, jumpIndex } from "./threads.js";
+import { loadThreads, place, threadsAt, elsewhere, fileCounts, summary, card, elsewhereBlock, allComments, commentList, jumpIndex, Replies } from "./threads.js";
 
 const ICONS = "mods/workspace-chrome";
 const PENDING = "pr-preview.pending";
@@ -51,6 +52,8 @@ export default class PrFiles extends View {
     this.sel = new Map();
     this.draft = null;
     this.open = new Set();
+    this.replies = new Replies({ data: () => this.prs.get(this.url)?.threads, reload: (cx) => this.load(this.url, cx, true),
+      agent: () => this.agent, files: () => this.prs.get(this.url)?.files });
     this.jump = null;
     this.showComments = false;
     this.width = 400;
@@ -194,6 +197,34 @@ export default class PrFiles extends View {
     cx.notify();
   }
 
+  // Line comments to the agent's chat as one message. From the draft it closes; pending ones stay pending.
+  toAgent(url, comments, cx, fromDraft) {
+    const address = this.agent;
+    if (!address || !comments.length || this.sending) return;
+    this.sending = fromDraft ? "draft" : "all";
+    this.sendError = null;
+    if (fromDraft) this.draft.error = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const error = await sendToAgent(address, agentMessage(url, this.prs.get(url)?.files, comments));
+      this.sending = null;
+      if (error && fromDraft && this.draft) this.draft.error = error;
+      else if (error) this.sendError = error;
+      else {
+        if (fromDraft) this.draft = null;
+        notify({ title: `Sent to ${agentName(address)}`, level: "info", timeout: 3000 });
+      }
+      cx.notify();
+    });
+  }
+
+  sendDraft(cx) {
+    const body = this.draft.input.value().trim();
+    if (!body) return;
+    const { url, path, side, line } = this.draft;
+    this.toAgent(url, [{ path, side, line, body }], cx, true);
+  }
+
   // A small action in the look: a soft outlined button, a deck chip, an lcars pill.
   button(t, s, id, text, icon, primary, onClick) {
     const lcars = s.name === "lcars";
@@ -291,6 +322,8 @@ export default class PrFiles extends View {
       .when(Boolean(summary(threads)), (el) => el.child(div().min_w(0).truncate().text_size(10.5).text_color(t.dim).child(label(s, summary(threads)))))
       .child(div().flex_1())
       .child(this.button(t, s, "view-comments", this.showComments ? "Files" : `Comments · ${all.total}`, null, false, (_e, cx) => { this.showComments = !this.showComments; cx.notify(); }))
+      .when(pending.length > 0 && Boolean(this.agent), (el) => el.child(this.button(t, s, "send-all",
+        this.sending === "all" ? "Sending…" : `Send ${pending.length} to agent`, `${ICONS}/terminal.svg`, false, (_e, cx) => this.toAgent(url, pendingFor(url), cx, false))))
       .child(pending.length
         ? this.button(t, s, "submit-review", `Submit review · ${pending.length}`, `${ICONS}/square-pen.svg`, true, () => this.openReview(url))
         : div().text_size(10.5).text_color(t.dim).child(label(s, "Click a line number to comment")));
@@ -329,6 +362,7 @@ export default class PrFiles extends View {
     }
     return v_flex().flex_none().border_b(1).border_color(t.border)
       .child(bar)
+      .when(Boolean(this.sendError), (el) => el.child(div().px(12).pb(4).text_size(11).text_color(t.blocked).child(this.sendError ?? "")))
       .when(Boolean(filter), (el) => el.child(filter))
       .child(v_flex().id("pr-file-list").flex_none().h(Math.min(220, Math.max(36, shown.length * 26 + 10))).px(6).pb(6).overflow_y_scrollbar()
         .children(rows)
@@ -370,7 +404,7 @@ export default class PrFiles extends View {
     const w = Math.max(200, Math.min(720, this.width / (settings().zoom || 1) - 24));
     const items = this.prs.get(url)?.threads?.items ?? [];
     const threads = [...threadsAt(items, path, side, n), ...(l.kind === "ctx" ? threadsAt(items, path, "LEFT", l.oldNo) : [])]
-      .map((th) => card(t, s, th, this.open, w, "th"));
+      .map((th) => card(t, s, th, this.open, w, "th", this.replies));
     const out = pendingFor(url).filter(at).map((c) =>
       h_flex().id(`p-${c.id}`).w(w).mx(10).my(5).p(9).gap(8).items_start().rounded(rad(s, 8)).border(1).border_color(t.border).bg(t.popover)
         .child(v_flex().flex_1().min_w(0).gap(5)
@@ -388,11 +422,32 @@ export default class PrFiles extends View {
         .child(div().id("draft-box").rounded(rad(s, 6)).border(1).border_color(t.border).p(6)
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .child(Textarea.new(d.input).h(60).text_size(12.5).text_color(t.foreground)))
+        .when(Boolean(d.error), (el) => el.child(div().text_size(11.5).text_color(t.blocked).child(d.error ?? "")))
         .child(h_flex().gap(8).justify_end()
           .child(this.button(t, s, "draft-cancel", "Cancel", null, false, (_e, cx) => { this.draft = null; cx.notify(); }))
+          .when(Boolean(this.agent), (el) => el.child(this.button(t, s, "draft-agent", this.sending === "draft" ? "Sending…" : "Send to agent", null, false, (_e, cx) => this.sendDraft(cx))))
           .child(this.button(t, s, "draft-add", "Add to review", null, true, (_e, cx) => this.addDraft(cx)))));
     }
     return [...threads, ...out];
+  }
+
+  // Runs of lines scroll sideways between the cards under them, so cards keep the panel's width.
+  segments(rows) {
+    const out = [];
+    let run = [];
+    const flush = (k) => {
+      if (run.length) out.push(h_flex().id(`pr-x-${k}`).w_full().overflow_x_scrollbar().child(v_flex().flex_none().min_w_full().children(run)));
+      run = [];
+    };
+    rows.forEach(([line, extras], k) => {
+      run.push(line);
+      if (extras.length) {
+        flush(k);
+        out.push(...extras);
+      }
+    });
+    flush(rows.length);
+    return out;
   }
 
   diff(t, s, url, file) {
@@ -404,13 +459,13 @@ export default class PrFiles extends View {
     const from = jumpIndex(all, j, (l, j) => l.kind !== "hunk" && (j.side === "LEFT" ? l.oldNo : l.newNo) === j.line);
     const lines = all.slice(from);
     const w = Math.max(200, Math.min(720, this.width / (settings().zoom || 1) - 24));
-    const outdated = elsewhereBlock(t, s, elsewhere(this.prs.get(url)?.threads?.items ?? [], file.name), this.open, w, "ot");
+    const outdated = elsewhereBlock(t, s, elsewhere(this.prs.get(url)?.threads?.items ?? [], file.name), this.open, w, "ot", this.replies);
     return v_flex().id("pr-diff").flex_1().min_h(0).overflow_y_scrollbar()
       .when(from > 0, (el) => el.child(div().id("earlier").mx(10).mt(6).px(8).py(4).rounded(rad(s, 6)).text_size(11).text_color(t.accent).cursor_pointer()
         .hover((el) => el.bg(t.hover)).on_click((_e, cx) => { this.jump = null; cx.notify(); })
         .child(label(s, `Show ${from} earlier lines`))))
-      .child(v_flex().id("pr-diff-x").py(4).overflow_x_scrollbar().font_family(settings().font_family ?? "JetBrains Mono").text_size(12.5).line_height("20px")
-        .children(lines.flatMap((l, k) => [this.line(t, s, l, k + from, url, file.name, lang, colors), ...this.extras(t, s, url, file.name, l, k + from)])))
+      .child(v_flex().py(4).font_family(settings().font_family ?? "JetBrains Mono").text_size(12.5).line_height("20px")
+        .children(this.segments(lines.map((l, k) => [this.line(t, s, l, k + from, url, file.name, lang, colors), this.extras(t, s, url, file.name, l, k + from)]))))
       .when(Boolean(outdated), (el) => el.child(outdated))
       .when(!file.lines.length, (el) => el.child(div().p(12).text_size(12).text_color(t.dim).child("No text diff (binary, renamed or mode change).")))
       .when(file.lines.length > MAX_LINES, (el) => el.child(div().p(12).text_size(11.5).text_color(t.muted)
@@ -429,6 +484,7 @@ export default class PrFiles extends View {
     }
     if (this.agent && !terminals().some((x) => x.address === this.agent && x.state === "live")) this.agent = null;
     const url = this.agent ? this.urlFor(this.agent) : null;
+    this.url = url;
     if (this.agent && !url && !this.tried.has(this.agent)) this.resolve(this.agent, cx);
     if (url) this.load(url, cx);
     const entry = url ? this.prs.get(url) : null;

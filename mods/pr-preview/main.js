@@ -4,11 +4,11 @@
 // line comments to the agent's session as one message.
 
 import { View, div, svg } from "gpui-kit";
-import { sessionFor, statusOf, openSession, startSession } from "./session.js";
+import { sessionFor, sessionForPr, statusOf, openSession, startSession, sendToAgent, agentName } from "./session.js";
 import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { tokens, langFor, paletteFor } from "./highlight.js";
-import { loadThreads, place, summary, card, elsewhere, elsewhereBlock, fileCounts, allComments, commentList, jumpIndex } from "./threads.js";
-import { parseDiff, splitRows } from "./diff.js";
+import { loadThreads, place, summary, card, elsewhere, elsewhereBlock, fileCounts, allComments, commentList, jumpIndex, Replies, ghWrite, submitPending } from "./threads.js";
+import { parseDiff, splitRows, agentMessage } from "./diff.js";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, spaces, run, theme, notify, props, closeOverlay, settings, home, appHome, shared, setShared, terminals, agents } from "herdr";
 import * as fs from "fs/promises";
@@ -75,6 +75,7 @@ export default class PrPreview extends View {
     this.reviewError = null;
     this.threads = null;
     this.open = new Set();
+    this.replies = new Replies({ data: () => this.threads, reload: (cx) => this.load(cx), agent: () => this.prAgent(), files: () => this.files });
     this.jump = null;
     this.only = null;
     this.showComments = false;
@@ -175,6 +176,31 @@ export default class PrPreview extends View {
     });
   }
 
+  // The PR's agent session, in PR mode.
+  prAgent() {
+    return this.terminal ? null : sessionForPr(props()?.key, props()?.url);
+  }
+
+  // Line comments to the PR's agent as one message. From the draft it closes; pending ones stay pending.
+  toAgent(comments, cx, fromDraft) {
+    const address = this.prAgent();
+    if (!address || !comments.length || this.sending) return;
+    this.sending = fromDraft ? "draft" : "all";
+    this.sendError = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      const error = await sendToAgent(address, agentMessage(props().url, this.files, comments));
+      this.sending = null;
+      if (error && fromDraft && this.draft) this.draft.error = error;
+      else if (error) this.sendError = error;
+      else {
+        if (fromDraft) this.draft = null;
+        notify({ title: `Sent to ${agentName(address)}`, level: "info", timeout: 3000 });
+      }
+      cx.notify();
+    });
+  }
+
   // Which files you've marked Viewed on GitHub (a file that changed since counts as unviewed).
   async loadViewed() {
     const { owner, repo, number } = parts(props().url);
@@ -199,9 +225,9 @@ export default class PrPreview extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       const mutation = on ? "markFileAsViewed" : "unmarkFileAsViewed";
-      const r = await exec("gh", ["api", "graphql", "-f",
+      const r = await ghWrite(["api", "graphql", "-f",
         `query=mutation($id: ID!, $path: String!) { ${mutation}(input: { pullRequestId: $id, path: $path }) { clientMutationId } }`,
-        "-F", `id=${this.prId}`, "-F", `path=${path}`], { cwd: home() });
+        "-F", `id=${this.prId}`, "-F", `path=${path}`]);
       if (r.code !== 0) {
         on ? this.viewed.delete(path) : this.viewed.add(path);
         notify({ title: "Couldn't update Viewed", body: r.stderr.trim(), level: "error", timeout: 4000 });
@@ -268,20 +294,66 @@ export default class PrPreview extends View {
     const tint = !l ? t.surface : this.isTarget(l, path) ? `${t.accent}2a` : { add: `${t.ansi2}12`, del: `${t.ansi1}16` }[l.kind];
     const mark = l && { add: t.ansi2, del: t.ansi1 }[l.kind];
     const n = l && (side === "LEFT" ? l.oldNo : l.newNo);
-    return h_flex().flex_1().min_w(0).overflow_hidden().items_start()
+    return h_flex().id(`s-${i}-${side}`).min_w_full().flex_none().items_start()
       .when(Boolean(tint), (el) => el.bg(tint))
       .child(div().w(3).flex_none().self_stretch().when(Boolean(mark), (el) => el.bg(mark)))
       .child(this.num(t, n, path, side, i))
-      .child(div().w(16).flex_none().text_color(mark ?? t.dim).child(!l ? "" : { add: "+", del: "−" }[l.kind] ?? " "))
-      .child(div().flex_1().min_w(0).overflow_hidden().pr(8).text_color(t.foreground).child(l ? this.code(t, l.text, path) : ""));
+      .child(div().w(16).flex_none().text_color(mark ?? t.dim).child(!l ? " " : { add: "+", del: "−" }[l.kind] ?? " "))
+      .child(div().flex_none().pr(16).text_color(t.foreground).child(l ? this.code(t, l.text, path) : " "));
   }
 
-  splitRow(t, row, i, mono, path) {
-    if (row.hunk) return this.diffLine(t, row.hunk, i, mono, null);
-    return h_flex().id(`s-${i}`).w_full().font_family(mono).text_size(12.5).line_height("20px").whitespace_nowrap()
-      .child(this.splitSide(t, row.left, "LEFT", mono, path, i))
-      .child(div().w(1).flex_none().self_stretch().bg(t.border))
-      .child(this.splitSide(t, row.right, "RIGHT", mono, path, i));
+  // A run of lines that scrolls sideways; runs break at the cards under a line, so cards keep the view's width.
+  scroller(id, rows) {
+    return h_flex().id(id).w_full().min_w(0).overflow_x_scrollbar().child(v_flex().flex_none().min_w_full().children(rows));
+  }
+
+  // rows: [line, extras]. Unified: a scroller per run.
+  runs(rows, key) {
+    const out = [];
+    let run = [];
+    const flush = (k) => {
+      if (run.length) out.push(this.scroller(`x-${key}-${k}`, run));
+      run = [];
+    };
+    rows.forEach(([line, extras], k) => {
+      run.push(line);
+      if (extras.length) {
+        flush(k);
+        out.push(...extras);
+      }
+    });
+    flush(rows.length);
+    return out;
+  }
+
+  // rows: [row, id, extras]. Split: each side of a run scrolls on its own; hunk headers span both.
+  splitRuns(t, rows, mono, path) {
+    const out = [];
+    let left = [];
+    let right = [];
+    const flush = (id) => {
+      if (left.length) out.push(h_flex().w_full()
+        .child(div().flex_1().min_w(0).child(this.scroller(`xl-${id}`, left)))
+        .child(div().w(1).flex_none().self_stretch().bg(t.border))
+        .child(div().flex_1().min_w(0).child(this.scroller(`xr-${id}`, right))));
+      left = [];
+      right = [];
+    };
+    for (const [row, id, extras] of rows) {
+      if (row.hunk) {
+        flush(id);
+        out.push(div().w_full().overflow_hidden().child(this.diffLine(t, row.hunk, id, mono, null)));
+        continue;
+      }
+      left.push(this.splitSide(t, row.left, "LEFT", mono, path, id));
+      right.push(this.splitSide(t, row.right, "RIGHT", mono, path, id));
+      if (extras.length) {
+        flush(id);
+        out.push(...extras);
+      }
+    }
+    flush(`${rows[rows.length - 1]?.[1]}-end`);
+    return out;
   }
 
   startDraft(path, side, line, cx) {
@@ -300,7 +372,7 @@ export default class PrPreview extends View {
 
   // Pending comments and the open draft that belong under a line; at(c) says whether c is on it.
   extras(t, path, at, i) {
-    const threads = (this.threads?.items ?? []).filter((x) => x.anchored && x.path === path && at(x)).map((x) => card(t, this.s, x, this.open, 720, "th"));
+    const threads = (this.threads?.items ?? []).filter((x) => x.anchored && x.path === path && at(x)).map((x) => card(t, this.s, x, this.open, 720, "th", this.replies));
     const out = pendingFor(this.key).filter((c) => c.path === path && at(c)).map((c) =>
       h_flex().id(`p-${c.id}`).max_w(760).mx(12).my(6).p(10).gap(10).items_start().rounded(rad(this.s, 8)).border(1).border_color(t.border).bg(t.popover)
         .child(v_flex().flex_1().min_w(0).gap(6)
@@ -318,9 +390,16 @@ export default class PrPreview extends View {
         .child(div().id("draft-box").rounded(rad(this.s, 6)).border(1).border_color(t.border).p(6)
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .child(Textarea.new(d.input).h(64).text_size(12.5).text_color(t.foreground)))
+        .when(Boolean(d.error), (el) => el.child(div().text_size(12).text_color(t.blocked).child(d.error ?? "")))
         .child(h_flex().gap(8).justify_end()
           .child(div().id("draft-cancel").px(10).py(5).rounded(rad(this.s, 6)).text_size(12).text_color(t.muted).hover((s) => s.bg(t.hover))
             .on_click((_e, cx) => { this.draft = null; cx.notify(); }).child("Cancel"))
+          .when(Boolean(this.prAgent()), (el) => el.child(div().id("draft-agent").px(10).py(5).rounded(rad(this.s, 6)).border(1).border_color(t.border)
+            .text_size(12).text_color(t.foreground).hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => {
+              const body = d.input.value().trim();
+              if (body) this.toAgent([{ path: d.path, side: d.side, line: d.line, body }], cx, true);
+            }).child(this.sending === "draft" ? "Sending…" : "Send to agent")))
           .child(div().id("draft-add").px(10).py(5).rounded(rad(this.s, 6)).bg(t.solid).text_size(12).text_color(t.solid_foreground)
             .hover((s) => s.opacity(0.85))
             .on_click((_e, cx) => this.addDraft(cx)).child(this.terminal ? "Add comment" : "Add to review"))));
@@ -329,6 +408,7 @@ export default class PrPreview extends View {
   }
 
   toolbar(t) {
+    const n = pendingFor(this.key).length;
     const adds = this.files.reduce((n, f) => n + f.adds, 0);
     const dels = this.files.reduce((n, f) => n + f.dels, 0);
     const allOpen = this.files.every((f) => this.expanded.has(f.name));
@@ -365,6 +445,11 @@ export default class PrPreview extends View {
           .hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => { this.layout = id; localStorage.setItem("diffLayout", id); cx.notify(); })
           .child(label))))
+      .when(!this.terminal && n > 0 && Boolean(this.prAgent()), (el) => el.child(h_flex().id("send-all").gap(6).items_center().px(11).py(4)
+        .rounded(rad(this.s, 7)).border(1).border_color(t.border).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.toAgent(pendingFor(this.key), cx, false))
+        .child(svg(`${ICONS}/terminal.svg`).size(13).text_color(t.foreground))
+        .child(div().text_size(12).text_color(t.foreground).child(label(this.s, this.sending === "all" ? "Sending…" : `Send ${n} to agent`)))))
       .child(this.submitButton(t));
   }
 
@@ -424,7 +509,7 @@ export default class PrPreview extends View {
         const from = split ? jumpIndex(splitRows(lines), j, rowAt) : jumpIndex(lines, j, jumpAt);
         const shown = split ? lines : lines.slice(from);
         const counts = fileCounts(items, f.name);
-        const later = open && elsewhereBlock(t, this.s, elsewhere(items, f.name), this.open, 720, `ot${fi}`);
+        const later = open && elsewhereBlock(t, this.s, elsewhere(items, f.name), this.open, 720, `ot${fi}`, this.replies);
         return v_flex().flex_none().rounded(rad(this.s, 8)).border(1).border_color(t.border)
           .child(h_flex().id(`f-${fi}`).px(12).py(8).gap(8).items_center().bg(t.surface)
             .when(open, (el) => el.border_b(1).border_color(t.border))
@@ -452,16 +537,14 @@ export default class PrPreview extends View {
           .when(open && from > 0, (el) => el.child(div().id(`earlier-${fi}`).mx(12).mt(6).px(8).py(4).rounded(rad(this.s, 6)).text_size(11.5).text_color(t.accent)
             .hover((s) => s.bg(t.hover)).on_click((_e, cx) => { this.jump = null; cx.notify(); })
             .child(label(this.s, `Show ${from} earlier ${split ? "rows" : "lines"}`))))
-          .when(open && split, (el) => el.child(v_flex().py(4).overflow_hidden()
-            .children(splitRows(shown).slice(from).flatMap((row, k, _a, i = k + from) => [
-              this.splitRow(t, row, `${fi}-${i}`, mono, f.name),
-              ...(row.hunk ? [] : this.extras(t, f.name, (c) => (c.side === "LEFT" ? row.left?.oldNo : row.right?.newNo) === c.line, `${fi}-${i}`)),
-            ]))))
-          .when(open && !split, (el) => el.child(v_flex().id(`d-${fi}`).py(4).overflow_x_scrollbar()
-            .children(shown.flatMap((l, k, _a, i = k + from) => [
+          .when(open && split, (el) => el.child(v_flex().py(4).font_family(mono).text_size(12.5).line_height("20px").whitespace_nowrap()
+            .children(this.splitRuns(t, splitRows(shown).slice(from).map((row, k, _a, i = k + from) => [row, `${fi}-${i}`,
+              row.hunk ? [] : this.extras(t, f.name, (c) => (c.side === "LEFT" ? row.left?.oldNo : row.right?.newNo) === c.line, `${fi}-${i}`)]), mono, f.name))))
+          .when(open && !split, (el) => el.child(v_flex().py(4)
+            .children(this.runs(shown.map((l, k, _a, i = k + from) => [
               this.diffLine(t, l, `${fi}-${i}`, mono, f.name),
-              ...(l.kind === "hunk" ? [] : this.extras(t, f.name, (c) => (c.side === "LEFT" ? l.oldNo : l.newNo) === c.line, `${fi}-${i}`)),
-            ]))))
+              l.kind === "hunk" ? [] : this.extras(t, f.name, (c) => (c.side === "LEFT" ? l.oldNo : l.newNo) === c.line, `${fi}-${i}`),
+            ]), `${fi}`))))
           .when(Boolean(later), (el) => el.child(later))
           .when(open, (el) => el
             .when(f.lines.length > MAX_LINES, (el) => el.child(div().px(12).py(8).text_size(12).text_color(t.muted)
@@ -476,6 +559,7 @@ export default class PrPreview extends View {
         cx.notify();
       }));
     return v_flex().flex_1().min_h(0).child(this.toolbar(t))
+      .when(Boolean(this.sendError), (el) => el.child(div().px(20).pt(6).text_size(12).text_color(t.blocked).child(this.sendError ?? "")))
       .child(h_flex().flex_1().min_h(0).child(list.min_w(0)).when(Boolean(comments), (el) => el.child(comments)));
   }
 
@@ -485,7 +569,7 @@ export default class PrPreview extends View {
     const body = this.reply.value().trim();
     const { url, key } = props();
     const pending = pendingFor(url);
-    const needsBody = kind === "comment" || kind === "request-changes" || (kind === "review" && !pending.length);
+    const needsBody = kind === "comment" || kind === "request-changes" || (kind === "review" && !pending.length && !this.threads?.pending);
     if (needsBody && !body) {
       this.reviewError = kind === "review" ? "Write a summary or add a comment on a line first." : "Write something first.";
       cx.notify();
@@ -496,8 +580,18 @@ export default class PrPreview extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       let r;
+      // Fresh, in case the pending review was submitted or discarded on GitHub since this loaded.
+      const reviewId = kind === "comment" ? null : ((await loadThreads(url).catch(() => null)) ?? this.threads)?.reviewId;
       if (kind === "comment") {
-        r = await exec("gh", ["pr", "comment", url, "--body", body], { cwd: home() });
+        r = await ghWrite(["pr", "comment", url, "--body", body]);
+      } else if (reviewId) {
+        // GitHub allows one pending review: add these comments to yours and submit it.
+        try {
+          await submitPending(reviewId, pending, EVENTS[kind], body, (c) => setPendingFor(url, pendingFor(url).filter((x) => x.id !== c.id)));
+          r = { code: 0 };
+        } catch (e) {
+          r = { code: 1, stderr: String(e?.message ?? e) };
+        }
       } else {
         const [, owner, repo, number] = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
         const review = { event: EVENTS[kind], comments: pending.map(({ path, line, side, body }) => ({ path, line, side, body })) };
@@ -505,7 +599,7 @@ export default class PrPreview extends View {
         // Hidden, so saving it doesn't reload the mod.
         const file = `${appHome()}/mods/pr-preview/.review.json`;
         await fs.writeFile(file, JSON.stringify(review));
-        r = await exec("gh", ["api", "-X", "POST", `repos/${owner}/${repo}/pulls/${number}/reviews`, "--input", file], { cwd: home() });
+        r = await ghWrite(["api", "-X", "POST", `repos/${owner}/${repo}/pulls/${number}/reviews`, "--input", file], JSON.stringify(review));
       }
       this.submitting = null;
       if (r.code !== 0) this.reviewError = r.stderr.trim() || r.stdout.trim() || "gh failed";
@@ -542,13 +636,13 @@ export default class PrPreview extends View {
         .child(act("approve", "circle-check", "Approve", true, "approve")));
   }
 
-  // Submitting makes a new review, which GitHub refuses while you have one pending there.
+  // Submitting adds to and submits the review you have pending there.
   ghPendingNote(t) {
     const n = this.threads?.pending ?? 0;
     if (!n || this.terminal) return null;
     return h_flex().gap(8).items_center().min_w(0)
       .child(div().min_w(0).truncate().text_size(11.5).text_color(t.ansi5)
-        .child(`Pending review on GitHub (${n} comment${n === 1 ? "" : "s"}): submit or discard it there first.`))
+        .child(`Submitting includes the ${n} comment${n === 1 ? "" : "s"} already pending on GitHub.`))
       .child(div().id("gh-pending-open").flex_none().text_size(11.5).text_color(t.accent).cursor_pointer().hover((s) => s.opacity(0.8))
         .on_click(() => exec("open", [`${props().url}/files`])).child(label(this.s, "Open on GitHub")));
   }

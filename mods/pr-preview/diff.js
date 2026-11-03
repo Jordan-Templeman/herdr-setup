@@ -1,4 +1,7 @@
-// Unified diffs as data: split by file with line numbers, and paired into side-by-side rows.
+// Unified diffs as data: split by file with line numbers, and paired into side-by-side rows; and line
+// comments as a message to an agent.
+
+import { langFor } from "./highlight.js";
 
 // A unified diff split by file, each line numbered on the side it belongs to.
 export function parseDiff(text) {
@@ -55,4 +58,31 @@ export function splitRows(lines) {
   }
   flush();
   return rows;
+}
+
+// A line and up to `around` lines either side of it in its hunk, as that side of the file reads.
+export function snippet(file, side, line, around = 2) {
+  const on = (l) => (side === "LEFT" ? l.kind !== "add" && l.oldNo : l.kind !== "del" && l.newNo);
+  const lines = file?.lines ?? [];
+  const i = lines.findIndex((l) => l.kind !== "hunk" && on(l) === line);
+  if (i < 0) return null;
+  const hunk = [];
+  for (let k = i - 1; k >= 0 && lines[k].kind !== "hunk"; k--) if (on(lines[k])) hunk.unshift(lines[k]);
+  const before = hunk.slice(-around);
+  const after = [];
+  for (let k = i + 1; k < lines.length && lines[k].kind !== "hunk" && after.length < around; k++) if (on(lines[k])) after.push(lines[k]);
+  return [...before, lines[i], ...after].map((l) => l.text).join("\n");
+}
+
+// One comment on a line, for an agent: where, the code there, and what to say about it. Without a url,
+// the agent's own worktree.
+export function lineNote(files, c) {
+  const at = `\`${c.path}:${c.line}\` (${c.side === "LEFT" ? "old" : "new"})`;
+  const code = snippet(files?.find((f) => f.name === c.path), c.side, c.line);
+  return [at, code != null && `\`\`\`${langFor(c.path) ?? ""}\n${code}\n\`\`\``, c.body].filter(Boolean).join("\n");
+}
+
+export function agentMessage(url, files, comments) {
+  if (comments.length === 1) return `On ${url}, ${lineNote(files, comments[0])}`;
+  return [`On ${url}:`, ...comments.map((c, i) => `${i + 1}. ${lineNote(files, c)}`)].join("\n\n");
 }

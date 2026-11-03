@@ -188,7 +188,17 @@ export function conversation(t, s, ctx) {
             .when(Boolean(th?.resolved), (el) => el.child(chip(t, s, label(s, "Resolved"), t.done)))
             .when(Boolean(th?.outdated), (el) => el.child(chip(t, s, label(s, "Outdated"), t.dim)))
             .when(drafted, (el) => el.child(chip(t, s, label(s, "Draft"), t.ansi3)))
-            .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(c.body.split("\n")[0])))
+            // Replies at a glance, so a posted reply shows without opening the thread.
+            .when((th?.comments?.length ?? 0) > 1, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.done)
+              .child(`↳ ${th.comments.length - 1} · ${th.comments[th.comments.length - 1].author}`)))
+            .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(c.body.split("\n")[0]))
+            // Resolve (or reopen) the thread right from its row.
+            .when(Boolean(th && rep && (th.resolved ? th.canUnresolve : th.canResolve)), (el) => el.child(
+              div().id(`cvr-${c.id}`).flex_none().px(7).py(1).rounded(rad(s, 5)).border(1).border_color(th.resolved ? t.border : `${t.done}88`)
+                .text_size(10.5).text_color(th.resolved ? t.muted : t.done).hover((h) => h.bg(t.hover))
+                .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                .on_click((_e, cx) => { cx.stop_propagation(); rep.resolve(th, cx); })
+                .child(label(s, rep.busy?.id === th.id ? "…" : th.resolved ? "Unresolve" : "Resolve")))))
           // Its thread when we have it (Resolve, Reply, every comment), else the comment alone.
           .when(shown, (el) => el.child(th
             ? card(t, s, { ...th, anchored: false, flat: true, noDrafts: !opener }, open, null, "cvt", rep)

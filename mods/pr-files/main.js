@@ -11,6 +11,7 @@ import { terminalFor } from "./mode.js";
 import { parseDiff, agentMessage } from "./diff.js";
 import { sendToAgent, agentName } from "./session.js";
 import { tokens, langFor, paletteFor } from "./highlight.js";
+import { Drafts, draftList } from "./drafts.js";
 import { loadThreads, place, threadsAt, elsewhere, fileCounts, summary, card, elsewhereBlock, allComments, commentList, jumpIndex, Replies } from "./threads.js";
 
 const ICONS = "mods/workspace-chrome";
@@ -18,7 +19,8 @@ const PENDING = "pr-preview.pending";
 const PICKED = "pr-files.urls";
 const PR_URL = /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/;
 const FIELDS = "title,state,isDraft,reviewDecision,statusCheckRollup";
-const MAX_LINES = 1500;
+// An open file draws CHUNK lines at a time, so a big one stays quick.
+const CHUNK = 600;
 const RETRY_MS = 15000;
 
 const pendingFor = (url) => (shared(PENDING) ?? {})[url] ?? [];
@@ -52,8 +54,13 @@ export default class PrFiles extends View {
     this.sel = new Map();
     this.draft = null;
     this.open = new Set();
+    this.limits = new Map();
+    this.showDrafts = false;
+    this.drafts = new Drafts({ url: () => this.url, data: () => this.prs.get(this.url)?.threads, files: () => this.prs.get(this.url)?.files,
+      reload: (cx) => this.load(this.url, cx, true) });
+    this.drafts.start(cx);
     this.replies = new Replies({ data: () => this.prs.get(this.url)?.threads, reload: (cx) => this.load(this.url, cx, true),
-      agent: () => this.agent, files: () => this.prs.get(this.url)?.files });
+      agent: () => this.agent, files: () => this.prs.get(this.url)?.files, drafts: this.drafts });
     this.jump = null;
     this.showComments = false;
     this.width = 400;
@@ -225,6 +232,20 @@ export default class PrFiles extends View {
     this.toAgent(url, [{ path, side, line, body }], cx, true);
   }
 
+  // Shows path in url's diff from line (null: its end), drawing enough lines to reach it.
+  jumpTo(url, path, side, line) {
+    this.sel.set(url, path);
+    this.jump = { url, path, side, line };
+    this.draft = null;
+    const f = this.prs.get(url)?.files?.find((x) => x.name === path);
+    const at = line == null || !f ? -1 : f.lines.findIndex((l) => l.kind !== "hunk" && (side === "LEFT" ? l.oldNo : l.newNo) === line);
+    if (at >= 0) this.limits.set(`${url}|${path}`, Math.max(this.limit(url, path), at + 50));
+  }
+
+  limit(url, path) {
+    return this.limits.get(`${url}|${path}`) ?? CHUNK;
+  }
+
   // A small action in the look: a soft outlined button, a deck chip, an lcars pill.
   button(t, s, id, text, icon, primary, onClick) {
     const lcars = s.name === "lcars";
@@ -321,7 +342,9 @@ export default class PrFiles extends View {
       .child(div().text_size(11).text_color(t.ansi1).child(`−${dels}`))
       .when(Boolean(summary(threads)), (el) => el.child(div().min_w(0).truncate().text_size(10.5).text_color(t.dim).child(label(s, summary(threads)))))
       .child(div().flex_1())
-      .child(this.button(t, s, "view-comments", this.showComments ? "Files" : `Comments · ${all.total}`, null, false, (_e, cx) => { this.showComments = !this.showComments; cx.notify(); }))
+      .when(this.drafts.list().length > 0 || this.showDrafts, (el) => el.child(this.button(t, s, "view-drafts", this.showDrafts ? "Files" : `Drafts · ${this.drafts.list().length}`,
+        null, false, (_e, cx) => { this.showDrafts = !this.showDrafts; this.showComments = false; cx.notify(); })))
+      .child(this.button(t, s, "view-comments", this.showComments ? "Files" : `Comments · ${all.total}`, null, false, (_e, cx) => { this.showComments = !this.showComments; this.showDrafts = false; cx.notify(); }))
       .when(pending.length > 0 && Boolean(this.agent), (el) => el.child(this.button(t, s, "send-all",
         this.sending === "all" ? "Sending…" : `Send ${pending.length} to agent`, `${ICONS}/terminal.svg`, false, (_e, cx) => this.toAgent(url, pendingFor(url), cx, false))))
       .child(pending.length
@@ -349,13 +372,22 @@ export default class PrFiles extends View {
         .when(f.adds > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi2).child(`+${f.adds}`)))
         .when(f.dels > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi1).child(`−${f.dels}`)));
     });
+    if (this.showDrafts) {
+      return v_flex().flex_none().border_b(1).border_color(t.border).child(bar)
+        .child(v_flex().id("pr-draft-list").flex_none().max_h(320).px(6).pb(8).overflow_y_scrollbar()
+          .child(draftList(t, s, this.drafts, (p, cx) => {
+            const i = p.thread;
+            if (i) this.jumpTo(url, i.path, i.side, i.anchored ? i.line : null);
+            else if (p.d.path && p.kind === "inline") this.jumpTo(url, p.d.path, p.d.side ?? "RIGHT", p.d.line);
+            this.showDrafts = false;
+            cx.notify();
+          })));
+    }
     if (this.showComments) {
       return v_flex().flex_none().border_b(1).border_color(t.border).child(bar)
         .child(v_flex().id("pr-comment-list").flex_none().max_h(320).px(6).pb(8).overflow_y_scrollbar()
           .child(commentList(t, s, all, (r, cx) => {
-            this.sel.set(url, r.path);
-            this.jump = { url, path: r.path, side: r.side, line: r.line };
-            this.draft = null;
+            this.jumpTo(url, r.path, r.side, r.line);
             this.showComments = false;
             cx.notify();
           })));
@@ -405,6 +437,7 @@ export default class PrFiles extends View {
     const items = this.prs.get(url)?.threads?.items ?? [];
     const threads = [...threadsAt(items, path, side, n), ...(l.kind === "ctx" ? threadsAt(items, path, "LEFT", l.oldNo) : [])]
       .map((th) => card(t, s, th, this.open, w, "th", this.replies));
+    const drafted = this.drafts.inlineAt(t, s, path, at, `di-${i}`).map((el) => div().w(w).mx(10).child(el));
     const out = pendingFor(url).filter(at).map((c) =>
       h_flex().id(`p-${c.id}`).w(w).mx(10).my(5).p(9).gap(8).items_start().rounded(rad(s, 8)).border(1).border_color(t.border).bg(t.popover)
         .child(v_flex().flex_1().min_w(0).gap(5)
@@ -428,7 +461,7 @@ export default class PrFiles extends View {
           .when(Boolean(this.agent), (el) => el.child(this.button(t, s, "draft-agent", this.sending === "draft" ? "Sending…" : "Send to agent", null, false, (_e, cx) => this.sendDraft(cx))))
           .child(this.button(t, s, "draft-add", "Add to review", null, true, (_e, cx) => this.addDraft(cx)))));
     }
-    return [...threads, ...out];
+    return [...threads, ...drafted, ...out];
   }
 
   // Runs of lines scroll sideways between the cards under them, so cards keep the panel's width.
@@ -454,13 +487,15 @@ export default class PrFiles extends View {
     if (!file) return div().p(12).text_size(12).text_color(t.dim).child("Select a file to view its changes.");
     const lang = langFor(file.name);
     const colors = paletteFor(t.background);
-    const all = file.lines.slice(0, MAX_LINES);
+    const all = file.lines.slice(0, this.limit(url, file.name));
     const j = this.jump && this.jump.url === url && this.jump.path === file.name ? this.jump : null;
     const from = jumpIndex(all, j, (l, j) => l.kind !== "hunk" && (j.side === "LEFT" ? l.oldNo : l.newNo) === j.line);
     const lines = all.slice(from);
     const w = Math.max(200, Math.min(720, this.width / (settings().zoom || 1) - 24));
     const outdated = elsewhereBlock(t, s, elsewhere(this.prs.get(url)?.threads?.items ?? [], file.name), this.open, w, "ot", this.replies);
+    const others = this.drafts.box(t, s, ["unplaced", "comment", "general"], "fu", w);
     return v_flex().id("pr-diff").flex_1().min_h(0).overflow_y_scrollbar()
+      .when(Boolean(others), (el) => el.child(div().mx(10).mt(6).child(others)))
       .when(from > 0, (el) => el.child(div().id("earlier").mx(10).mt(6).px(8).py(4).rounded(rad(s, 6)).text_size(11).text_color(t.accent).cursor_pointer()
         .hover((el) => el.bg(t.hover)).on_click((_e, cx) => { this.jump = null; cx.notify(); })
         .child(label(s, `Show ${from} earlier lines`))))
@@ -468,8 +503,9 @@ export default class PrFiles extends View {
         .children(this.segments(lines.map((l, k) => [this.line(t, s, l, k + from, url, file.name, lang, colors), this.extras(t, s, url, file.name, l, k + from)]))))
       .when(Boolean(outdated), (el) => el.child(outdated))
       .when(!file.lines.length, (el) => el.child(div().p(12).text_size(12).text_color(t.dim).child("No text diff (binary, renamed or mode change).")))
-      .when(file.lines.length > MAX_LINES, (el) => el.child(div().p(12).text_size(11.5).text_color(t.muted)
-        .child(`${file.lines.length - MAX_LINES} more lines; Open review shows the rest on GitHub.`)));
+      .when(file.lines.length > all.length, (el) => el.child(div().id("more-lines").mx(10).my(6).px(8).py(4).rounded(rad(s, 6)).text_size(11).text_color(t.accent)
+        .cursor_pointer().hover((el) => el.bg(t.hover)).on_click((_e, cx) => { this.limits.set(`${url}|${file.name}`, all.length + CHUNK); cx.notify(); })
+        .child(label(s, `Show ${Math.min(CHUNK, file.lines.length - all.length)} more lines (${file.lines.length - all.length} left)`))));
   }
 
   render(cx) {
@@ -487,6 +523,7 @@ export default class PrFiles extends View {
     this.url = url;
     if (this.agent && !url && !this.tried.has(this.agent)) this.resolve(this.agent, cx);
     if (url) this.load(url, cx);
+    this.drafts.list(cx);
     const entry = url ? this.prs.get(url) : null;
 
     let body;

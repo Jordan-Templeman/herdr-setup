@@ -40,6 +40,23 @@ pond drops from agent names. `setup.example.json` shows every key.
 
 Only Claude sessions started after the hooks are in place report to the pond.
 
+## Drafted review replies (`bin/herdr-draft`)
+
+Agents stage PR replies instead of listing them in chat; the PR preview (Files changed, Conversation) and
+the side panel show each one under the thread it answers, marked "Draft · from <agent>", with Reply now,
+Add to review, Edit and Discard. "Drafts · N" lists them and jumps to each; "Post all as review" adds every
+reply to your pending GitHub review without submitting it. Nothing is posted until you click.
+
+```sh
+bin/herdr-draft add --pr <PR url> --reply-to <comment url> --body-file reply.md   # or --body - (stdin)
+bin/herdr-draft add --pr <PR url> --path <file> --line <n> [--side LEFT] --body-file c.md   # new line comment
+bin/herdr-draft add --pr <PR url> --body-file c.md                                  # new PR comment
+bin/herdr-draft list --pr <PR url> · rm --pr <PR url> <id> · clear --pr <PR url> · --help
+```
+
+Drafts live in `drafts/<owner>__<repo>__<number>.json` (untracked). A second draft for the same comment
+replaces the first; a draft whose thread is gone shows under "Unplaced drafts".
+
 ## Working on it
 
 - `mods/<name>/`: one folder per mod (`field` is the pond, `pane-plus` the pane header).

@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""herdr-draft: stage PR review replies for the PR preview to show, one per thread, for the user to post.
+
+Usage:
+  herdr-draft add --pr <PR url> --reply-to <comment url> --body-file <file>   reply on a review thread or PR comment
+  herdr-draft add --pr <PR url> --path <file> --line <n> [--side RIGHT|LEFT] --body-file <file>   new inline comment
+  herdr-draft add --pr <PR url> --body-file <file>                             new PR (conversation) comment
+  herdr-draft list --pr <PR url> [--json]
+  herdr-draft rm --pr <PR url> <id>
+  herdr-draft clear --pr <PR url>
+
+add prints the draft's id. --body - reads the body from stdin (--body "text" also works).
+--reply-to is the comment's link as GitHub shows it: https://github.com/o/r/pull/N#discussion_r123 (a review
+thread; any comment in it), .../pull/N#issuecomment-456 (a PR comment), or the /files#r123 form. It must be on
+the --pr PR. A second draft for the same comment replaces the first. --agent <name> labels who wrote it
+(default: your Herdr tab, else "agent").
+
+Nothing is posted: the user reads each draft under its thread in the PR preview and posts, edits or
+discards it there. Write each body as the exact markdown to post.
+Drafts live in ~/.config/herdr-app/drafts/<owner>__<repo>__<number>.json (HERDR_DRAFTS_DIR overrides).
+"""
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+PR = re.compile(r"^https://github\.com/([^/\s]+)/([^/\s]+)/pull/(\d+)(?:[/?#].*)?$")
+DIR = os.environ.get("HERDR_DRAFTS_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "drafts")
+
+
+def die(msg):
+    print(f"herdr-draft: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def parse_pr(url):
+    m = PR.match(url or "")
+    if not m:
+        die(f"not a GitHub PR url: {url!r} (want https://github.com/<owner>/<repo>/pull/<number>)")
+    return m.group(1), m.group(2), int(m.group(3))
+
+
+def target_of(pr, link):
+    """The reply-to link as <PR url>#discussion_r<id> or #issuecomment-<id>; it must be on pr."""
+    owner, repo, number = pr
+    m = PR.match(link or "")
+    if not m:
+        die(f"--reply-to isn't a GitHub PR comment link: {link!r}")
+    if (m.group(1).lower(), m.group(2).lower(), int(m.group(3))) != (owner.lower(), repo.lower(), number):
+        die(f"--reply-to is on {m.group(1)}/{m.group(2)}#{m.group(3)}, not {owner}/{repo}#{number}")
+    frag = link.split("#", 1)[1] if "#" in link else ""
+    base = f"https://github.com/{owner}/{repo}/pull/{number}"
+    if re.fullmatch(r"discussion_r\d+", frag) or re.fullmatch(r"issuecomment-\d+", frag):
+        return f"{base}#{frag}"
+    r = re.fullmatch(r"r(\d+)", frag)
+    if r:
+        return f"{base}#discussion_r{r.group(1)}"
+    die(f"--reply-to needs a comment anchor (#discussion_r<id> or #issuecomment-<id>), got #{frag or '(none)'}")
+
+
+def path_of(pr):
+    owner, repo, number = pr
+    return os.path.join(DIR, f"{owner}__{repo}__{number}.json")
+
+
+def load(pr):
+    try:
+        with open(path_of(pr)) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+    except json.JSONDecodeError as e:
+        die(f"{path_of(pr)} isn't valid JSON ({e}); fix or delete it")
+    owner, repo, number = pr
+    data.setdefault("pr", f"https://github.com/{owner}/{repo}/pull/{number}")
+    data.setdefault("drafts", [])
+    return data
+
+
+def save(pr, data):
+    file = path_of(pr)
+    if not data["drafts"]:
+        if os.path.exists(file):
+            os.unlink(file)
+        return
+    os.makedirs(DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=DIR, prefix=".tmp-", suffix=".json")
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, file)
+
+
+def agent_name():
+    me = os.environ.get("HC_TERMINAL_ID")
+    if not me:
+        return "agent"
+    try:
+        env = {"HOME": os.environ.get("HOME", ""), "PATH": os.environ.get("PATH", "")}
+        hc = os.path.expanduser("~/.local/bin/hc")
+        out = subprocess.run([hc if os.path.exists(hc) else "hc", "ls", "--json"], env=env, capture_output=True, text=True, timeout=5)
+        for t in json.loads(out.stdout).get("terminals", []):
+            if t.get("address") == me:
+                tab = (t.get("where") or "").split(" / ")[-1].strip()
+                return tab if tab and not tab.isdigit() else me
+    except Exception:
+        pass
+    return me
+
+
+def read_body(args):
+    if args.get("body-file"):
+        f = args["body-file"]
+        try:
+            text = sys.stdin.read() if f == "-" else open(f).read()
+        except OSError as e:
+            die(f"can't read --body-file: {e}")
+    elif "body" in args:
+        text = sys.stdin.read() if args["body"] == "-" else args["body"]
+    else:
+        die("add needs --body-file <file> or --body - (stdin)")
+    text = text.strip("\n")
+    if not text.strip():
+        die("the body is empty")
+    return text
+
+
+VALUED = {"pr", "reply-to", "body-file", "body", "path", "line", "side", "agent"}
+
+
+def parse(argv):
+    args, pos = {}, []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-h", "--help"):
+            print(__doc__.strip())
+            sys.exit(0)
+        if a == "--json":
+            args["json"] = True
+        elif a.startswith("--"):
+            key, _, val = a[2:].partition("=")
+            if key not in VALUED:
+                die(f"unknown option --{key} (see --help)")
+            if not _:
+                i += 1
+                if i >= len(argv):
+                    die(f"--{key} needs a value")
+                val = argv[i]
+            args[key] = val
+        else:
+            pos.append(a)
+        i += 1
+    return args, pos
+
+
+def where(d):
+    if d.get("target"):
+        return d["target"].split("#", 1)[1]
+    if d.get("path"):
+        return f"{d['path']}:{d.get('line')}{' (old)' if d.get('side') == 'LEFT' else ''}"
+    return "PR comment"
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip())
+        sys.exit(2)
+    cmd, (args, pos) = sys.argv[1], parse(sys.argv[2:])
+    if cmd in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    if cmd not in ("add", "list", "ls", "rm", "clear"):
+        die(f"unknown command {cmd!r} (add, list, rm, clear)")
+    pr = parse_pr(args.get("pr"))
+    data = load(pr)
+    if cmd == "add":
+        draft = {"id": "d" + secrets.token_hex(3), "target": None}
+        if args.get("reply-to"):
+            if args.get("path") or args.get("line"):
+                die("use --reply-to or --path/--line, not both")
+            draft["target"] = target_of(pr, args["reply-to"])
+        elif args.get("path") or args.get("line"):
+            if not (args.get("path") and args.get("line")):
+                die("a new inline comment needs both --path and --line")
+            try:
+                line = int(args["line"])
+            except ValueError:
+                die("--line must be a number")
+            side = args.get("side", "RIGHT").upper()
+            if side not in ("RIGHT", "LEFT"):
+                die("--side is RIGHT (new code) or LEFT (removed code)")
+            draft.update(path=args["path"], line=line, side=side)
+        draft["body"] = read_body(args)
+        draft["agent"] = args.get("agent") or agent_name()
+        draft["createdAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if draft["target"]:
+            old = [d for d in data["drafts"] if d.get("target") == draft["target"]]
+            if old:
+                print(f"herdr-draft: replaced {', '.join(d['id'] for d in old)} for the same comment", file=sys.stderr)
+            data["drafts"] = [d for d in data["drafts"] if d.get("target") != draft["target"]]
+        data["drafts"].append(draft)
+        save(pr, data)
+        print(draft["id"])
+    elif cmd in ("list", "ls"):
+        if args.get("json"):
+            print(json.dumps(data, indent=2))
+            return
+        if not data["drafts"]:
+            print("No drafts.")
+        for d in data["drafts"]:
+            first = (d.get("body") or "").strip().split("\n")[0]
+            print(f"{d['id']}  {where(d)}  [{d.get('agent', 'agent')}]  {first[:80]}")
+    elif cmd == "rm":
+        if len(pos) != 1:
+            die("rm needs one draft id")
+        keep = [d for d in data["drafts"] if d.get("id") != pos[0]]
+        if len(keep) == len(data["drafts"]):
+            die(f"no draft {pos[0]!r} on this PR")
+        data["drafts"] = keep
+        save(pr, data)
+        print(f"removed {pos[0]}")
+    elif cmd == "clear":
+        n = len(data["drafts"])
+        data["drafts"] = []
+        save(pr, data)
+        print(f"removed {n} draft{'' if n == 1 else 's'}")
+
+
+if __name__ == "__main__":
+    main()

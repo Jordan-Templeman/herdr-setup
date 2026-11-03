@@ -11,6 +11,7 @@ import { style, label, rad, badge, heading, brackets } from "./style.js";
 import { tokens, langFor, paletteFor } from "./highlight.js";
 import { loadThreads, place, summary, card, elsewhere, elsewhereBlock, fileCounts, allComments, commentList, jumpIndex, Replies, ghWrite, submitPending, openLink } from "./threads.js";
 import { loadTimeline, conversation, findItem } from "./conversation.js";
+import { Drafts, draftList } from "./drafts.js";
 import { anchorTarget } from "./anchor.js";
 import { parseDiff, splitRows, agentMessage } from "./diff.js";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
@@ -41,7 +42,10 @@ function checks(rollup = []) {
   return { failing: failing.map((c) => c.name || c.context), pending: pending.length, passed };
 }
 
-const MAX_LINES = 1500;
+// Big diffs stay quick: files open on their own up to ~800 lines in all (none longer than that), and an
+// open file draws CHUNK lines at a time.
+const AUTO_LINES = 800;
+const CHUNK = 600;
 const PENDING = "pr-preview.pending";
 const VIEWED = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
@@ -81,8 +85,12 @@ export default class PrPreview extends View {
     this.open = new Set();
     this.timeline = null;
     this.focus = null;
+    this.limits = new Map();
+    this.showDrafts = false;
+    this.drafts = new Drafts({ url: () => (this.terminal ? null : props()?.url), data: () => this.threads, files: () => this.files,
+      timeline: () => this.timeline, reload: (cx) => this.load(cx), prefill: (body, cx) => this.prefill(body, cx) });
     this.replies = new Replies({ data: () => this.threads, reload: (cx) => this.load(cx), agent: () => this.prAgent(), files: () => this.files,
-      quote: (c, cx) => this.quote(c, cx) });
+      quote: (c, cx) => this.quote(c, cx), drafts: this.drafts });
     this.jump = null;
     this.only = null;
     this.showComments = false;
@@ -93,6 +101,7 @@ export default class PrPreview extends View {
     this.target = anchorTarget(props()?.anchor);
     if (this.terminal) this.loadLocal(cx);
     else {
+      this.drafts.start(cx);
       this.load(cx);
       if (this.target.view === "files") this.showFiles(cx);
       if (this.target.view === "conversation") this.showConversation(cx);
@@ -112,7 +121,7 @@ export default class PrPreview extends View {
       if (i) {
         this.only = i.path;
         this.expanded.add(i.path);
-        this.jump = { path: i.path, side: i.side, line: i.anchored ? i.line : null };
+        this.jumpTo(i.path, i.side, i.anchored ? i.line : null);
         if (i.resolved || i.outdated) this.open.add(i.id);
         if (i.comments.length > 1) this.open.add(`r:${i.id}`);
       }
@@ -131,6 +140,48 @@ export default class PrPreview extends View {
       this.applyAnchor();
       cx.notify();
     });
+  }
+
+  // Opens path and starts it near line (null: its end), drawing enough lines to reach it.
+  jumpTo(path, side, line) {
+    this.only = path;
+    this.expanded.add(path);
+    this.jump = { path, side, line };
+    const f = this.files?.find((x) => x.name === path);
+    const at = line == null || !f ? -1 : f.lines.findIndex((l) => l.kind !== "hunk" && (side === "LEFT" ? l.oldNo : l.newNo) === line);
+    if (at >= 0) this.limits.set(path, Math.max(this.limit(path), at + 50));
+  }
+
+  limit(path) {
+    return this.limits.get(path) ?? CHUNK;
+  }
+
+  // A draft from the Drafts list: its thread or line in Files changed, or its place in Conversation.
+  pickDraft(p, cx) {
+    if (p.kind === "thread" || p.kind === "inline") {
+      const i = p.thread;
+      if (i) {
+        this.jumpTo(i.path, i.side, i.anchored ? i.line : null);
+        if (i.resolved || i.outdated) this.open.add(i.id);
+      } else this.jumpTo(p.d.path, p.d.side ?? "RIGHT", p.d.line);
+      this.showFiles(cx);
+    } else if (p.kind === "comment" && p.d.target) {
+      this.target = { view: "conversation", match: (u) => Boolean(u) && u.split("#")[1] === p.d.target.split("#")[1] };
+      this.showConversation(cx);
+      this.applyAnchor();
+    } else if (p.kind === "general") this.showConversation(cx);
+    else {
+      this.only = null;
+      this.showFiles(cx);
+    }
+    cx.notify();
+  }
+
+  // A drafted PR comment into the comment box.
+  prefill(body, cx) {
+    this.reply.set_value(body);
+    if (this.view !== "conversation") this.composing = true;
+    cx.notify();
   }
 
   // Reply to a comment outside a thread: quote it in the comment box.
@@ -217,14 +268,15 @@ export default class PrPreview extends View {
     });
   }
 
-  // Opens files in order until about 1500 lines show; a bigger diff starts mostly collapsed, so the
-  // first render stays quick (thousands of expanded lines interrupt it).
+  // Opens files in order while they fit in AUTO_LINES; a file longer than that starts collapsed, so the
+  // first render stays quick (thousands of drawn lines interrupt it).
   expandSome(files) {
     let shown = 0;
     for (const f of files) {
-      if (shown && shown + f.lines.length > 1500) break;
+      if (f.lines.length > AUTO_LINES) continue;
+      if (shown + f.lines.length > AUTO_LINES) break;
       this.expanded.add(f.name);
-      shown += Math.min(f.lines.length, MAX_LINES);
+      shown += f.lines.length;
     }
   }
 
@@ -451,6 +503,7 @@ export default class PrPreview extends View {
   // Pending comments and the open draft that belong under a line; at(c) says whether c is on it.
   extras(t, path, at, i) {
     const threads = (this.threads?.items ?? []).filter((x) => x.anchored && x.path === path && at(x)).map((x) => card(t, this.s, x, this.open, 720, "th", this.replies));
+    const drafted = this.drafts.inlineAt(t, this.s, path, at, `di-${i}`).map((el) => div().max_w(760).mx(12).child(el));
     const out = pendingFor(this.key).filter((c) => c.path === path && at(c)).map((c) =>
       h_flex().id(`p-${c.id}`).max_w(760).mx(12).my(6).p(10).gap(10).items_start().rounded(rad(this.s, 8)).border(1).border_color(t.border).bg(t.popover)
         .child(v_flex().flex_1().min_w(0).gap(6)
@@ -482,7 +535,7 @@ export default class PrPreview extends View {
             .hover((s) => s.opacity(0.85))
             .on_click((_e, cx) => this.addDraft(cx)).child(this.terminal ? "Add comment" : "Add to review"))));
     }
-    return [...threads, ...out];
+    return [...threads, ...drafted, ...out];
   }
 
   toolbar(t) {
@@ -580,9 +633,10 @@ export default class PrPreview extends View {
     const jumpAt = (l, j) => l.kind !== "hunk" && (j.side === "LEFT" ? l.oldNo : l.newNo) === j.line;
     const rowAt = (r, j) => !r.hunk && (j.side === "LEFT" ? r.left?.oldNo : r.right?.newNo) === j.line;
     const list = v_flex().id("files").flex_1().min_h(0).px(20).py(12).gap(8).overflow_y_scrollbar()
+      .children([!this.terminal && this.drafts.box(t, this.s, ["unplaced"], "fu", null)].filter(Boolean))
       .children(files.map((f, fi) => {
         const open = this.expanded.has(f.name);
-        const lines = open ? f.lines.slice(0, MAX_LINES) : [];
+        const lines = open ? f.lines.slice(0, this.limit(f.name)) : [];
         const j = this.jump?.path === f.name ? this.jump : null;
         const from = split ? jumpIndex(splitRows(lines), j, rowAt) : jumpIndex(lines, j, jumpAt);
         const shown = split ? lines : lines.slice(from);
@@ -599,6 +653,7 @@ export default class PrPreview extends View {
               .child(`${counts.threads} thread${counts.threads === 1 ? "" : "s"}`)))
             .when(counts.pending > 0, (el) => el.child(div().px(6).rounded(rad(this.s, 5)).bg(`${t.ansi5}22`).text_size(11).text_color(t.ansi5)
               .child(`${counts.pending} pending on GitHub`)))
+            .when(!open && f.lines.length > AUTO_LINES, (el) => el.child(div().text_size(11).text_color(t.dim).child(`${f.lines.length} lines`)))
             .child(div().text_size(11.5).text_color(t.ansi2).child(`+${f.adds}`))
             .child(div().text_size(11.5).text_color(t.ansi1).child(`−${f.dels}`))
             .when(!this.terminal, (el) => el.child(h_flex().id(`v-${fi}`).ml(6).gap(6).items_center().px(8).py(3).rounded(rad(this.s, 6)).border(1)
@@ -624,18 +679,18 @@ export default class PrPreview extends View {
               l.kind === "hunk" ? [] : this.extras(t, f.name, (c) => (c.side === "LEFT" ? l.oldNo : l.newNo) === c.line, `${fi}-${i}`),
             ]), `${fi}`))))
           .when(Boolean(later), (el) => el.child(later))
-          .when(open, (el) => el
-            .when(f.lines.length > MAX_LINES, (el) => el.child(div().px(12).py(8).text_size(12).text_color(t.muted)
-              .child(`${f.lines.length - MAX_LINES} more lines${this.terminal ? "." : "; open Files changed on GitHub for the rest."}`))));
+          .when(open && f.lines.length > lines.length, (el) => el.child(div().id(`more-${fi}`).mx(12).my(6).px(8).py(4).rounded(rad(this.s, 6))
+            .text_size(11.5).text_color(t.accent).hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => { this.limits.set(f.name, lines.length + CHUNK); cx.notify(); })
+            .child(label(this.s, `Show ${Math.min(CHUNK, f.lines.length - lines.length)} more lines (${f.lines.length - lines.length} left)`))));
       }));
     const comments = this.showComments && !this.terminal && v_flex().id("comment-list").w(380).flex_none().min_h(0).px(10).py(12)
       .border_l(1).border_color(t.border).overflow_y_scrollbar()
       .child(commentList(t, this.s, allComments(pendingFor(this.key), this.threads), (r, cx) => {
-        this.only = r.path;
-        this.expanded.add(r.path);
-        this.jump = { path: r.path, side: r.side, line: r.line };
+        this.jumpTo(r.path, r.side, r.line);
         cx.notify();
       }));
+
     return v_flex().flex_1().min_h(0).child(this.toolbar(t))
       .when(Boolean(this.sendError), (el) => el.child(div().px(20).pt(6).text_size(12).text_color(t.blocked).child(this.sendError ?? "")))
       .child(h_flex().flex_1().min_h(0).child(list.min_w(0)).when(Boolean(comments), (el) => el.child(comments)));
@@ -839,7 +894,7 @@ export default class PrPreview extends View {
       .when(st.name === "deck", (el) => el.children(brackets(t, t.accent, 14)));
   }
 
-  render() {
+  render(cx) {
     const t = theme();
     const st = (this.s = style());
     if (this.terminal) return this.renderLocal(t, st);
@@ -858,6 +913,7 @@ export default class PrPreview extends View {
     const c = p && checks(p.statusCheckRollup);
 
     const overlay = Boolean(props()?.overlay);
+    const drafts = this.drafts.list(cx).length;
     const header = h_flex().px(lcars ? 12 : 20).py(12).gap(10).flex_wrap().items_center().border_b(1).border_color(t.border)
       .when(soft, (el) => el.child(div().text_size(12).text_color(t.muted).child("Pull request")))
       .when(!soft, (el) => el.child(heading(st, t, "Pull request", lcars ? "08-git" : "08.git")))
@@ -869,6 +925,13 @@ export default class PrPreview extends View {
       .when(p?.mergeStateStatus === "BEHIND", (el) => el.child(div().text_size(11.5).text_color(t.dim).child(label(st, "Behind base"))))
       .when(!lcars, (el) => el.child(div().flex_1()))
       .when(Boolean(url), (el) => el.child(this.copyLink(t, url, "pr-preview")))
+      .when(drafts > 0 || this.showDrafts, (el) => el.child(div().id("drafts-toggle").px(8).py(4).rounded(rad(st, 6)).text_size(11.5)
+        .text_color(t.ansi3).when(this.showDrafts, (el) => el.bg(`${t.ansi3}22`)).hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => {
+          this.showDrafts = !this.showDrafts;
+          if (this.showDrafts && this.view === "overview") this.showConversation(cx);
+          cx.notify();
+        }).child(label(st, `Drafts · ${drafts}`))))
       .when(Boolean(p), (el) => el.child(this.segments(t, [
         ["overview", "Overview", (cx) => { this.view = "overview"; cx.notify(); }],
         ["conversation", "Conversation", (cx) => this.showConversation(cx)],
@@ -942,6 +1005,11 @@ export default class PrPreview extends View {
       .child(button("open", "git-branch", "Open on GitHub", false, () => { exec("open", [url]); this.close(); }))
       .children([this.sessionButton(button)].filter(Boolean));
 
+    if (this.showDrafts && p && this.view !== "overview") {
+      body = h_flex().flex_1().min_h(0).child(v_flex().flex_1().min_w(0).min_h(0).child(body))
+        .child(v_flex().id("draft-list").w(360).flex_none().min_h(0).px(10).py(12).border_l(1).border_color(t.border).overflow_y_scrollbar()
+          .child(draftList(t, st, this.drafts, (d, cx) => this.pickDraft(d, cx))));
+    }
     return v_flex().size_full().relative().bg(t.popover).child(header).child(body)
       .when(this.composing && Boolean(p), (el) => el.child(this.composer(t, button)))
       .child(footer)

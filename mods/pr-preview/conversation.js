@@ -158,7 +158,8 @@ export function conversation(t, s, ctx) {
   data.items.forEach((it, k) => {
     if (k < from) return;
     if (it.type === "comment") {
-      rows.push(box(t, s, `cv-${k}`, hit(it.c) && t.accent).child(head(t, it.c.author, "commented", it.c.createdAt)).child(commentBody(t, s, it.c, open, "cvc", rep)));
+      rows.push(box(t, s, `cv-${k}`, hit(it.c) && t.accent).child(head(t, it.c.author, "commented", it.c.createdAt)).child(commentBody(t, s, it.c, open, "cvc", rep))
+        .children(rep?.drafts ? rep.drafts.forComment(t, s, it.c, `cvd${k}`) : []));
     } else if (it.type === "review") {
       const color = { APPROVED: t.done, CHANGES_REQUESTED: t.blocked, PENDING: t.ansi5 }[it.state] ?? t.muted;
       const verb = REVIEWED[it.state] ?? it.state.toLowerCase();
@@ -173,7 +174,10 @@ export function conversation(t, s, ctx) {
       const inline = it.comments.map((c) => {
         const th = threadOf.get(c.id);
         const key = `cvr:${c.id}`;
-        const shown = open.has(key) !== hit(c);
+        // A thread's drafts show once, under the row of its first comment, which opens for them.
+        const opener = th?.comments[0]?.id === c.id;
+        const drafted = opener && Boolean(rep?.drafts?.forThread(t, s, th, "cvq").length);
+        const shown = open.has(key) !== (hit(c) || drafted);
         return v_flex().gap(4)
           .child(h_flex().id(`cvi-${c.id}`).h(24).px(6).gap(8).items_center().rounded(rad(s, 6)).cursor_pointer().hover((el) => el.bg(t.hover))
             .when(hit(c), (el) => el.bg(`${t.accent}22`))
@@ -183,10 +187,11 @@ export function conversation(t, s, ctx) {
             .when(c.reply, (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(label(s, "reply"))))
             .when(Boolean(th?.resolved), (el) => el.child(chip(t, s, label(s, "Resolved"), t.done)))
             .when(Boolean(th?.outdated), (el) => el.child(chip(t, s, label(s, "Outdated"), t.dim)))
+            .when(drafted, (el) => el.child(chip(t, s, label(s, "Draft"), t.ansi3)))
             .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(c.body.split("\n")[0])))
           // Its thread when we have it (Resolve, Reply, every comment), else the comment alone.
           .when(shown, (el) => el.child(th
-            ? card(t, s, { ...th, anchored: false, flat: true }, open, null, "cvt", rep)
+            ? card(t, s, { ...th, anchored: false, flat: true, noDrafts: !opener }, open, null, "cvt", rep)
             : v_flex().ml(20).child(commentBody(t, s, c, open, "cvx", rep))));
       });
       rows.push(box(t, s, `cv-${k}`, color).when(hit(it.c), (el) => el.border(2).border_color(t.accent))
@@ -226,6 +231,8 @@ export function conversation(t, s, ctx) {
         .when(c.failing.length > 0, (el) => el.child(div().whitespace_normal().text_color(t.blocked).child(`${c.failing.length} failing: ${c.failing.join(", ")}`)))
         .when(c.pending > 0, (el) => el.child(div().text_color(t.working).child(`${c.pending} pending`)))));
   }
+  const drafts = rep?.drafts?.box(t, s, ["general", "unplaced"], "cvg", null);
+  if (drafts) rows.push(drafts);
   // The comment box: posts to the conversation as you.
   const composer = ctx.reply && v_flex().gap(8)
     .child(div().id("cv-reply").rounded(rad(s, 8)).border(1).border_color(t.border).bg(t.background).p(8)

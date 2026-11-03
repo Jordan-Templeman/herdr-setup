@@ -66,7 +66,9 @@ export default class Chat extends View {
     this.viewH = 0;
     this.contentH = 0;
     this.reply = TextareaState.new({ placeholder: "Message Claude…  (paste or drop images and files)", rows: 2 });
-    this.reply.on("submit", (_e, cx) => this.send(cx));
+    this.reply.set_auto_grow(2, 8);
+    // Enter sends; Shift+Enter starts a new line.
+    this.reply.on("submit", (e, cx) => (e?.shift ? this.reply.replace("\n") : this.send(cx)));
     this.reply.on("change", (_e, cx) => { this.typed = this.reply.value(); cx.notify(); });
     this.reply.on("paste_other", (_e, cx) => this.pasteImage(cx));
     this.typed = "";
@@ -537,7 +539,7 @@ export default class Chat extends View {
             cx.notify();
             cx.spawn(async (cx) => { if (await this.copyImages(dropped.filter((p) => IMAGE.test(p)))) cx.notify(); });
           })
-          .child(Textarea.new(this.reply).h(52).text_size(13).text_color(t.foreground)))
+          .child(Textarea.new(this.reply).text_size(13).text_color(t.foreground)))
         .child(div().id("send").px(14).py(8).rounded(10).bg(t.solid).text_size(12.5).font_semibold()
           .text_color(t.solid_foreground).hover((s) => s.opacity(0.85))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())

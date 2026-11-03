@@ -10,7 +10,7 @@
 import { openBeside } from "./beside.js";
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextView, TextareaState, Textarea } from "gpui-base";
-import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings, openOverlay } from "herdr";
+import { exec, hc, home, appHome, terminals, agents, focused, props, run, theme, closeOverlay, settings, openOverlay, notify } from "herdr";
 import { toCli, closeWith, focusAgent } from "./mode.js";
 import { anchorFromUrl } from "./anchor.js";
 import { openChanges } from "./changes.js";
@@ -48,6 +48,15 @@ const short = (url) => url.replace(/^https?:\/\/(www\.)?/, "").replace(/(.{48}).
 const PASTE_SH = `osascript -e 'try' -e 'set d to the clipboard as «class PNGf»' -e 'set f to open for access POSIX file "'"$1"'" with write permission' -e 'write d to f' -e 'close access f' -e 'return "ok"' -e 'end try'`;
 
 const WORD = { working: "working", blocked: "needs you", done: "done", idle: "idle" };
+
+// Claude Code's permission modes, as the hint under its input names them. Shift+Tab cycles them.
+const MODES = [
+  { id: "default", name: "Ask", match: null },
+  { id: "accept", name: "Accept edits", match: /accept edits on/i },
+  { id: "plan", name: "Plan", match: /plan mode on/i },
+  { id: "auto", name: "Auto", match: /auto mode on/i },
+  { id: "bypass", name: "Bypass", match: /bypass permissions on/i },
+];
 
 // HTML written as tags (beyond <details>, which folds): render it as HTML rather than markdown.
 const HTML_TAG = /<\/?(p|div|br|b|strong|i|em|a|ul|ol|li|table|thead|tbody|tr|td|th|h[1-6]|pre|img|sub|sup|kbd|hr|blockquote|span)\b[^>]*>/i;
@@ -122,6 +131,7 @@ export default class Chat extends View {
         const a = await this.reload();
         const b = await this.watchScreen();
         const c = await this.watchSuggestion();
+        if ((this.tick = (this.tick ?? 0) + 1) % 4 === 1 && !this.switching && (await this.readMode())) cx.notify();
         if (a || b || c) cx.notify();
         await exec("sleep", [POLL_S]);
       }
@@ -171,6 +181,38 @@ export default class Chat extends View {
     if (next === this.suggestion) return false;
     this.suggestion = next;
     return true;
+  }
+
+  // Claude Code's permission mode, from the hint under its input ("⏵⏵ auto mode on", "⏸ plan mode on").
+  async readMode() {
+    if (!this.address || this.file) return false;
+    const r = await hc(["read", this.address]);
+    if (r.code !== 0) return false;
+    let text = r.stdout;
+    try { text = JSON.parse(text).text ?? text; } catch {}
+    const tail = text.split("\n").slice(-6).join("\n");
+    const mode = MODES.find((m) => m.match && m.match.test(tail))?.id ?? "default";
+    if (mode === this.mode) return false;
+    this.mode = mode;
+    return true;
+  }
+
+  // Shift+Tab until Claude shows the chosen mode (it cycles; some modes only exist when enabled).
+  setMode(id, cx) {
+    this.modeMenu = false;
+    this.switching = id;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      for (let i = 0; i < 6 && this.mode !== id; i++) {
+        await hc(["keys", this.address, "shift+tab"]);
+        await exec("sleep", ["0.35"]);
+        await this.readMode();
+        cx.notify();
+      }
+      if (this.mode !== id) notify({ title: `Couldn't switch to ${MODES.find((m) => m.id === id)?.name}`, body: "That mode may not be enabled for this session.", level: "info", timeout: 4000 });
+      this.switching = null;
+      cx.notify();
+    });
   }
 
   async readPrompt() {
@@ -627,6 +669,25 @@ export default class Chat extends View {
         .on_click((_e, cx) => this.stop(cx))
         .child(svg(`${ICONS}/square.svg`).size(11).text_color(lcars ? t.background : t.blocked))
         .child(div().text_size(soft ? 11.5 : 10.5).text_color(lcars ? t.background : t.foreground).when(lcars, (el) => el.font_family(st.head).text_size(14)).child(label(st, "Stop")))))
+      .when(Boolean(this.address), (el) => el.child(div().relative()
+        .child(h_flex().id("mode").gap(5).items_center().px(8).py(lcars ? 3 : 4).rounded(rad(st, 6))
+          .border(lcars ? 0 : 1).border_color(this.mode && this.mode !== "default" ? t.accent : t.border)
+          .when(lcars, (el) => el.bg(t.ansi3))
+          .hover((s) => (lcars ? s.opacity(0.85) : s.bg(t.hover)))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .on_click((_e, cx) => { this.modeMenu = !this.modeMenu; cx.notify(); })
+          .child(div().text_size(soft ? 11.5 : 10.5).text_color(lcars ? t.background : t.foreground).when(lcars, (el) => el.font_family(st.head).text_size(14))
+            .child(label(st, this.switching ? "Switching…" : MODES.find((m) => m.id === (this.mode ?? "default"))?.name ?? "Mode")))
+          .child(svg(`${ICONS}/chevron-down.svg`).size(11).text_color(lcars ? t.background : t.muted)))
+        .when(Boolean(this.modeMenu), (el) => el.child(v_flex().id("mode-menu").absolute().top(30).right(0).w(170).p(4).gap(2)
+          .rounded(rad(st, 8)).border(1).border_color(t.border).bg(t.popover).shadow_md()
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .children(MODES.map((m) => h_flex().id(`mode-${m.id}`).px(8).py(5).gap(8).items_center().rounded(rad(st, 6))
+            .when(m.id === (this.mode ?? "default"), (el) => el.bg(t.selected))
+            .hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => this.setMode(m.id, cx))
+            .child(div().flex_1().text_size(12).text_color(t.foreground).child(m.name))))
+          .child(div().px(8).pt(4).text_size(10.5).text_color(t.dim).child("Same as Shift+Tab in the CLI"))))))
       .when(Boolean(this.address), (el) => el.child(h_flex().id("to-changes").gap(5).items_center().px(8).py(lcars ? 3 : 4).rounded(rad(st, 6))
         .border(lcars ? 0 : 1).border_color(t.border).when(lcars, (el) => el.bg(t.ansi5))
         .hover((s) => (lcars ? s.opacity(0.85) : s.bg(t.hover)))

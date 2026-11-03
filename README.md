@@ -18,7 +18,7 @@ Jira is optional (`jira` CLI from ankitpokhrel/jira-cli).
 ```sh
 cd ~/.config/herdr-app
 git init -b main
-git remote add origin <this repo's URL>
+git remote add origin https://github.com/Jordan-Templeman/herdr-setup.git
 git fetch origin && git checkout -f -t origin/main
 ./install.sh
 ```

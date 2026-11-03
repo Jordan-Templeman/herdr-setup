@@ -121,7 +121,8 @@ export default class Chat extends View {
       for (;;) {
         const a = await this.reload();
         const b = await this.watchScreen();
-        if (a || b) cx.notify();
+        const c = await this.watchSuggestion();
+        if (a || b || c) cx.notify();
         await exec("sleep", [POLL_S]);
       }
     });
@@ -142,6 +143,34 @@ export default class Chat extends View {
     const changed = JSON.stringify(next) !== JSON.stringify(this.prompt);
     this.prompt = next;
     return changed;
+  }
+
+  // Claude Code's next-prompt suggestion (the grey text in its input after a turn): read from the
+  // screen for a few seconds after the agent finishes, while the message box is empty.
+  async watchSuggestion() {
+    const status = this.status();
+    const was = this.lastStatus;
+    this.lastStatus = status;
+    if (status === "working" || status === "blocked") {
+      const had = Boolean(this.suggestion);
+      this.suggestion = null;
+      return had;
+    }
+    if (was !== status && (status === "done" || status === "idle")) this.suggestUntil = Date.now() + 12000;
+    if (!this.address || this.prompt || this.typed || !(Date.now() < (this.suggestUntil ?? 0))) return false;
+    const r = await hc(["read", this.address]);
+    if (r.code !== 0) return false;
+    let text = r.stdout;
+    try { text = JSON.parse(text).text ?? text; } catch {}
+    const lines = text.split("\n");
+    const rule = lines.map((l) => /^\s*─{6,}/.test(l)).lastIndexOf(true);
+    if (rule < 1) return false;
+    const box = lines.slice(Math.max(0, lines.slice(0, rule).map((l) => /^\s*─{6,}/.test(l)).lastIndexOf(true)), rule);
+    const line = box.map((l) => /^\s*❯\s?(.*)$/.exec(l)?.[1]?.trim()).filter((x) => x !== undefined).pop();
+    const next = line && line.replace(/[…\s]/g, "").length > 1 ? line : null;
+    if (next === this.suggestion) return false;
+    this.suggestion = next;
+    return true;
   }
 
   async readPrompt() {
@@ -659,6 +688,15 @@ export default class Chat extends View {
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => this.showTerminal()).child(label(st, "Open terminal")));
 
+    // Claude's suggested next prompt: click (or Tab in an empty box) to use it.
+    const useSuggestion = (cx) => { this.setText(this.suggestion, cx); this.suggestion = null; this.reply.focus?.(); };
+    const suggest = Boolean(this.suggestion) && !this.typed.trim() && h_flex().id("suggest").mx(12).mb(6).gap(8).items_center().px(10).py(5)
+      .rounded(rad(st, 8)).border(1).border_color(t.border).bg(t.surface).cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => useSuggestion(cx))
+      .child(div().flex_none().px(5).rounded(rad(st, 4)).border(1).border_color(t.border).text_size(10.5).text_color(t.dim).child("Tab"))
+      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(this.suggestion ?? ""));
+
     const list = this.suggestions();
     const menu = list.length > 0 && v_flex().id("slash").mx(12).mb(6).p(4).rounded(rad(st, 10)).border(1).border_color(soft ? t.border : t.accent)
       .bg(t.background).shadow_md()
@@ -692,7 +730,9 @@ export default class Chat extends View {
       .when(Boolean(attached), (el) => el.child(attached))
       .when(Boolean(this.sendError), (el) => el.child(div().text_size(11.5).text_color(t.blocked).child(this.sendError)))
       .child(h_flex().gap(8).items_end()
-        .child(div().id("reply").flex_1().min_w(0).rounded(rad(st, 10)).border(1).border_color(t.input).bg(t.background).px(10).py(6)
+        .child(div().id("reply").on_key_down((e, cx) => {
+          if (e.keystroke === "tab" && this.suggestion && !this.reply.value().trim()) { cx.stop_propagation(); useSuggestion(cx); }
+        }).flex_1().min_w(0).rounded(rad(st, 10)).border(1).border_color(t.input).bg(t.background).px(10).py(6)
           .when(st.name === "deck", (el) => el.border_l(2).border_color(t.accent))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_drop((event, cx) => {
@@ -716,6 +756,7 @@ export default class Chat extends View {
         : feed)
       .when(Boolean(banner), (el) => el.child(banner))
       .when(Boolean(menu), (el) => el.child(menu))
+      .when(Boolean(suggest), (el) => el.child(suggest))
       .child(composer)
       .when(Boolean(this.viewer), (el) => el.child(this.viewerView(t)));
   }
